@@ -3,6 +3,8 @@
 import { useCallback, useRef, useEffect } from "react"
 import { useAvatarStore } from "../../store/avatarStore"
 import { useStreamingAvatarContext } from "./context"
+import { TaskType } from "@heygen/streaming-avatar"
+import axios from "axios"
 
 interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList
@@ -29,6 +31,10 @@ declare global {
   }
 }
 
+const isBCGSession = (session: any): session is import("../../store/avatarStore").BCGSession => {
+  return session && "conversationId" in session && "selectedProduct" in session
+}
+
 export const useVoiceChat = () => {
   const {
     avatarRef,
@@ -40,275 +46,215 @@ export const useVoiceChat = () => {
     setIsVoiceChatLoading,
   } = useStreamingAvatarContext()
 
-  const { getSession } = useAvatarStore()
+  const { getSession, currentAvatarType } = useAvatarStore()
 
   const speechRecognitionRef = useRef<SpeechRecognition | null>(null)
   const isAvatarSpeakingRef = useRef(false)
+  const lastAvatarResponseRef = useRef("")
 
-  const sendMessageToAPI = useCallback(
-    async (userInput: string, avatarType: string) => {
-      console.log("[v0] DEBUG - Iniciando sendMessageToAPI con userInput:", userInput)
-      console.log("[v0] DEBUG - Avatar type:", avatarType)
-
-      const session = getSession(avatarType)
-      if (!session?.sessionId) {
-        console.error("[v0] No session ID found for avatar type:", avatarType)
-        return null
-      }
-
-      console.log("[v0] DEBUG - Session encontrada:", session.sessionId)
-
-      try {
-        console.log("[v0] DEBUG - Enviando petición a /api/chat con datos:", {
-          session_id: session.sessionId,
-          user_input: userInput,
-        })
-
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            session_id: session.sessionId,
-            user_input: userInput,
-          }),
-        })
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
-
-        const data = await response.json()
-        console.log("[v0] DEBUG - Respuesta completa de API:", data)
-        console.log("[v0] DEBUG - Agent response extraído:", data.agent_response)
-        return data.agent_response
-      } catch (error) {
-        console.error("[v0] Error sending message to API:", error)
-        return null
-      }
-    },
-    [getSession],
-  )
+  // ✅ validación mínima de transcript
+  const isValidTranscript = (transcript: string): boolean => {
+    const clean = transcript.replace(/[^\w\sáéíóúüñÁÉÍÓÚÜÑ]/g, "").trim()
+    const validShort = ["si", "sí", "no", "ok"]
+    if (validShort.includes(clean.toLowerCase())) return true
+    if (clean.length < 3) return false
+    const noiseWords = ["ah", "eh", "um", "uh", "mm", "hmm"]
+    if (noiseWords.includes(clean.toLowerCase())) return false
+    return true
+  }
 
   const pauseSpeechRecognition = useCallback(() => {
     if (speechRecognitionRef.current && !isMuted) {
-      console.log("[v0] DEBUG - Pausando reconocimiento de voz - avatar va a hablar")
-      console.log(
-        "[v0] DEBUG - Estado antes de pausar - isMuted:",
-        isMuted,
-        "isAvatarSpeaking:",
-        isAvatarSpeakingRef.current,
-      )
+      console.log("[v0] SPEECH - Pausando reconocimiento")
       speechRecognitionRef.current.stop()
       isAvatarSpeakingRef.current = true
-      console.log("[v0] DEBUG - Speech recognition pausado, isAvatarSpeaking ahora es:", isAvatarSpeakingRef.current)
     }
   }, [isMuted])
 
   const resumeSpeechRecognition = useCallback(() => {
-    console.log("[v0] DEBUG - Intentando reanudar reconocimiento de voz")
-    console.log(
-      "[v0] DEBUG - Estado actual - isMuted:",
-      isMuted,
-      "isVoiceChatActive:",
-      isVoiceChatActive,
-      "isAvatarSpeaking:",
-      isAvatarSpeakingRef.current,
-    )
-
     if (speechRecognitionRef.current && !isMuted && isVoiceChatActive) {
-      console.log("[v0] DEBUG - Reanudando reconocimiento de voz en 500ms")
+      console.log("[v0] SPEECH - Reanudando reconocimiento")
       setTimeout(() => {
         if (speechRecognitionRef.current && !isMuted) {
-          console.log("[v0] DEBUG - Ejecutando restart de speech recognition")
           speechRecognitionRef.current.start()
         }
         isAvatarSpeakingRef.current = false
-        console.log("[v0] DEBUG - isAvatarSpeaking ahora es:", isAvatarSpeakingRef.current)
-      }, 500)
+      }, 1000)
     }
   }, [isMuted, isVoiceChatActive])
 
+  // 🎤 SpeechRecognition
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (SpeechRecognition) {
-        speechRecognitionRef.current = new SpeechRecognition()
-        speechRecognitionRef.current.continuous = true
-        speechRecognitionRef.current.interimResults = true
-        speechRecognitionRef.current.lang = "es-ES"
+    if (typeof window === "undefined") return
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) return
 
-        speechRecognitionRef.current.onresult = async (event) => {
-          console.log("[v0] DEBUG - Speech recognition onresult disparado")
-          console.log("[v0] DEBUG - isAvatarSpeaking:", isAvatarSpeakingRef.current)
+    speechRecognitionRef.current = new SpeechRecognition()
+    speechRecognitionRef.current.continuous = true
+    speechRecognitionRef.current.interimResults = true
+    speechRecognitionRef.current.lang = "es-ES"
 
-          if (isAvatarSpeakingRef.current) {
-            console.log("[v0] DEBUG - IGNORANDO reconocimiento - avatar está hablando")
-            return
-          }
+    speechRecognitionRef.current.onresult = async (event) => {
+      const avatarType = currentAvatarType || "gestor-cobranza"
 
-          const lastResult = event.results[event.results.length - 1]
-          console.log("[v0] DEBUG - Resultado de speech recognition - isFinal:", lastResult.isFinal)
-          console.log("[v0] DEBUG - Transcript parcial:", lastResult[0].transcript)
+      const lastResult = event.results[event.results.length - 1]
+      const transcript = lastResult[0].transcript.trim()
 
-          if (lastResult.isFinal) {
-            const transcript = lastResult[0].transcript.trim()
-            console.log("[v0] DEBUG - RESULTADO FINAL de speech recognition:", transcript)
-            console.log("[v0] DEBUG - Longitud del transcript:", transcript.length)
+      // 🚨 Usuario empezó a hablar (interim) → interrumpir avatar
+      if (!lastResult.isFinal && transcript.length > 0) {
+        console.log("[v0] 🎤 SPEECH - Usuario empezó a hablar:", transcript)
+        if (avatarRef.current?.interrupt) {
+          avatarRef.current.interrupt()
+        } else {
+          avatarRef.current?.closeVoiceChat()
+        }
+        isAvatarSpeakingRef.current = false
+        return
+      }
 
-            // Validar que el transcript tenga contenido real (mínimo 3 caracteres y no solo espacios/puntuación)
-            const cleanTranscript = transcript.replace(/[^\w\s]/g, "").trim()
-            if (cleanTranscript.length < 3) {
-              console.log("[v0] DEBUG - IGNORANDO transcript - muy corto o solo ruido:", transcript)
+      // 🚨 Usuario terminó de hablar (final)
+      if (lastResult.isFinal) {
+        console.log("[v0] 🎤 SPEECH - Final transcript:", transcript)
+
+        if (!isValidTranscript(transcript)) {
+          console.log("[v0] 🎤 SPEECH - Transcript inválido, ignorado")
+          return
+        }
+
+        if (!avatarRef.current) return
+        pauseSpeechRecognition()
+
+        try {
+          let textToSpeak = ""
+
+          if (avatarType === "gestor-cobranza") {
+            const session = getSession("gestor-cobranza")
+            if (!session?.sessionId) {
+              console.error("[v0] GESTOR - No sessionId")
               return
             }
+            const body = { session_id: session.sessionId, user_input: transcript }
+            console.log("[v0] GESTOR - Request:", body)
 
-            // Filtrar palabras comunes de ruido o falsos positivos
-            const noiseWords = ["ah", "eh", "um", "uh", "mm", "hmm", "sí", "no", "ok"]
-            if (noiseWords.includes(cleanTranscript.toLowerCase())) {
-              console.log("[v0] DEBUG - IGNORANDO transcript - palabra de ruido:", transcript)
+            const res = await axios.post("/api/gestor-cobranza/chat", body, {
+              headers: { "Content-Type": "application/json" },
+              timeout: 30000,
+            })
+            textToSpeak = res.data.agent_response || ""
+          }
+
+          if (avatarType === "bcg-product") {
+            const session = getSession("bcg-product")
+            if (!session || !isBCGSession(session) || !session.conversationId) {
+              console.error("[v0] BCG - No conversationId")
               return
             }
+            const body = { user_input: transcript, conversation_id: session.conversationId }
+            console.log("[v0] BCG - Request:", body)
 
-            if (avatarRef.current && transcript) {
-              console.log("[v0] DEBUG - Procesando transcript final, pausando speech recognition")
-              pauseSpeechRecognition()
-
-              console.log("[v0] DEBUG - Enviando transcript a API:", transcript)
-              const apiResponse = await sendMessageToAPI(transcript, "gestor-cobranza")
-
-              if (apiResponse) {
-                console.log("[v0] DEBUG - API respondió exitosamente")
-                console.log("[v0] DEBUG - Respuesta de API que se enviará al avatar:", apiResponse)
-                console.log("[v0] DEBUG - Haciendo que el avatar hable la respuesta")
-
-                avatarRef.current.speak({ text: apiResponse })
-
-                console.log("[v0] DEBUG - Avatar.speak() ejecutado, esperando 5 segundos antes de reanudar")
-                setTimeout(() => {
-                  console.log("[v0] DEBUG - Timeout completado, reanudando speech recognition")
-                  resumeSpeechRecognition()
-                }, 5000)
-              } else {
-                console.log("[v0] DEBUG - API falló, usando transcript original como fallback")
-                avatarRef.current.speak({ text: transcript })
-
-                setTimeout(() => {
-                  resumeSpeechRecognition()
-                }, 5000)
-              }
-            } else {
-              console.log("[v0] DEBUG - No se procesó - avatarRef o transcript vacío")
-              console.log("[v0] DEBUG - avatarRef.current:", !!avatarRef.current)
-              console.log("[v0] DEBUG - transcript:", transcript)
-            }
+            const res = await axios.post("/api/bcg/chat", body, {
+              headers: { "Content-Type": "application/json" },
+              timeout: 30000,
+            })
+            textToSpeak = res.data.response || ""
           }
+
+          if (textToSpeak) {
+            await avatarRef.current.speak({
+              text: textToSpeak,
+              taskType: TaskType.REPEAT,
+            })
+            lastAvatarResponseRef.current = textToSpeak.toLowerCase()
+            console.log("[v0] AVATAR - Repeated:", textToSpeak)
+          }
+        } catch (err) {
+          console.error("[v0] ❌ Error procesando transcript:", err)
         }
 
-        speechRecognitionRef.current.onerror = (event) => {
-          console.error("[v0] DEBUG - Speech recognition error:", event)
-          console.log(
-            "[v0] DEBUG - Estado en error - isMuted:",
-            isMuted,
-            "isVoiceChatActive:",
-            isVoiceChatActive,
-            "isAvatarSpeaking:",
-            isAvatarSpeakingRef.current,
-          )
-
-          if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
-            console.log("[v0] DEBUG - Reintentando speech recognition en 3 segundos debido a error")
-            setTimeout(() => {
-              if (speechRecognitionRef.current && !isMuted && isVoiceChatActive) {
-                speechRecognitionRef.current.start()
-              }
-            }, 3000)
-          }
-        }
-
-        speechRecognitionRef.current.onend = () => {
-          console.log("[v0] DEBUG - Speech recognition ended")
-          console.log(
-            "[v0] DEBUG - Estado en onend - isMuted:",
-            isMuted,
-            "isVoiceChatActive:",
-            isVoiceChatActive,
-            "isAvatarSpeaking:",
-            isAvatarSpeakingRef.current,
-          )
-
-          if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
-            console.log("[v0] DEBUG - Reiniciando speech recognition automáticamente en 1 segundo")
-            setTimeout(() => {
-              if (speechRecognitionRef.current && !isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
-                speechRecognitionRef.current.start()
-              }
-            }, 1000)
-          } else {
-            console.log("[v0] DEBUG - NO reiniciando speech recognition - condiciones no cumplidas")
-          }
-        }
+        setTimeout(resumeSpeechRecognition, 2000)
       }
     }
-  }, [avatarRef, sendMessageToAPI, pauseSpeechRecognition, resumeSpeechRecognition, isMuted, isVoiceChatActive])
 
+    speechRecognitionRef.current.onerror = (event) => {
+      console.error("[v0] ❌ SPEECH_ERROR:", event)
+      if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
+        setTimeout(() => {
+          speechRecognitionRef.current?.start()
+        }, 3000)
+      }
+    }
+
+    speechRecognitionRef.current.onend = () => {
+      console.log("[v0] 🔚 SPEECH_END")
+      if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
+        setTimeout(() => {
+          speechRecognitionRef.current?.start()
+        }, 1000)
+      }
+    }
+  }, [avatarRef, pauseSpeechRecognition, resumeSpeechRecognition, isMuted, isVoiceChatActive, getSession, currentAvatarType])
+
+  // 🚀 Start Voice Chat
   const startVoiceChat = useCallback(
     async (isInputAudioMuted?: boolean) => {
+      const avatarType = currentAvatarType || "gestor-cobranza"
       if (!avatarRef.current) return
       setIsVoiceChatLoading(true)
 
       try {
-        await avatarRef.current?.startVoiceChat({
-          isInputAudioMuted,
-        })
-
-        if (speechRecognitionRef.current && !isInputAudioMuted) {
-          speechRecognitionRef.current.start()
+        if (avatarType === "gestor-cobranza" || avatarType === "bcg-product") {
+          if (speechRecognitionRef.current && !isInputAudioMuted) {
+            speechRecognitionRef.current.start()
+          }
+          setIsVoiceChatActive(true)
+          setIsMuted(!!isInputAudioMuted)
+        } else {
+          await avatarRef.current?.startVoiceChat({ isInputAudioMuted })
+          if (speechRecognitionRef.current && !isInputAudioMuted) {
+            speechRecognitionRef.current.start()
+          }
+          setIsVoiceChatActive(true)
+          setIsMuted(!!isInputAudioMuted)
         }
-
-        setIsVoiceChatLoading(false)
-        setIsVoiceChatActive(true)
-        setIsMuted(!!isInputAudioMuted)
-      } catch (error) {
-        console.error("[v0] Error starting voice chat:", error)
+      } catch (err) {
+        console.error("[v0] ❌ Error startVoiceChat:", err)
+      } finally {
         setIsVoiceChatLoading(false)
       }
     },
-    [avatarRef, setIsMuted, setIsVoiceChatActive, setIsVoiceChatLoading],
+    [avatarRef, setIsMuted, setIsVoiceChatActive, setIsVoiceChatLoading, currentAvatarType],
   )
 
+  // 🛑 Stop Voice Chat
   const stopVoiceChat = useCallback(() => {
     if (!avatarRef.current) return
-
-    if (speechRecognitionRef.current) {
-      speechRecognitionRef.current.stop()
-    }
-
+    speechRecognitionRef.current?.stop()
     avatarRef.current?.closeVoiceChat()
     setIsVoiceChatActive(false)
     setIsMuted(true)
   }, [avatarRef, setIsMuted, setIsVoiceChatActive])
 
+  // 🔇 Mute
   const muteInputAudio = useCallback(() => {
     if (!avatarRef.current) return
-
-    if (speechRecognitionRef.current) {
-      speechRecognitionRef.current.stop()
+    speechRecognitionRef.current?.stop()
+    const mediaStream = (avatarRef.current as any).localStream
+    if (mediaStream) {
+      mediaStream.getAudioTracks().forEach(track => (track.enabled = false))
     }
-
-    avatarRef.current?.muteInputAudio()
+    console.log("[v0] 🔇 Mic muted")
     setIsMuted(true)
   }, [avatarRef, setIsMuted])
 
+  // 🔊 Unmute
   const unmuteInputAudio = useCallback(() => {
     if (!avatarRef.current) return
-
-    if (speechRecognitionRef.current) {
-      speechRecognitionRef.current.start()
+    speechRecognitionRef.current?.start()
+    const mediaStream = (avatarRef.current as any).localStream
+    if (mediaStream) {
+      mediaStream.getAudioTracks().forEach(track => (track.enabled = true))
     }
-
-    avatarRef.current?.unmuteInputAudio()
+    console.log("[v0] 🎤 Mic unmuted")
     setIsMuted(false)
   }, [avatarRef, setIsMuted])
 
@@ -324,7 +270,6 @@ export const useVoiceChat = () => {
     muteInputAudio,
     unmuteInputAudio,
     setSpeechLanguage,
-    sendMessageToAPI,
     isMuted,
     isVoiceChatActive,
     isVoiceChatLoading,

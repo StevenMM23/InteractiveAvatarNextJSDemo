@@ -1,93 +1,79 @@
-import { TaskType, TaskMode } from "@heygen/streaming-avatar";
-import React, { useCallback, useEffect, useState } from "react";
-import { usePrevious } from "ahooks";
+"use client"
 
-import { Select } from "../Select";
-import { Button } from "../Button";
-import { SendIcon } from "../Icons";
-import { useTextChat } from "../logic/useTextChat";
-import { Input } from "../Input";
-import { useConversationState } from "../logic/useConversationState";
+import type React from "react"
+import { useCallback, useEffect, useState } from "react"
+import { usePrevious } from "ahooks"
 
-export const TextInput: React.FC = () => {
-  const { sendMessage, sendMessageSync, repeatMessage, repeatMessageSync } =
-    useTextChat();
-  const { startListening, stopListening } = useConversationState();
-  const [taskType, setTaskType] = useState<TaskType>(TaskType.TALK);
-  const [taskMode, setTaskMode] = useState<TaskMode>(TaskMode.ASYNC);
-  const [message, setMessage] = useState("");
+import { Button } from "../Button"
+import { SendIcon } from "../Icons"
+import { useTextChat } from "../logic/useTextChat"
+import { Input } from "../Input"
+import { useConversationState } from "../logic/useConversationState"
+import { useAvatarStore } from "@/store/avatarStore"
 
-  const handleSend = useCallback(() => {
-    if (message.trim() === "") {
-      return;
-    }
-    if (taskType === TaskType.TALK) {
-      taskMode === TaskMode.SYNC
-        ? sendMessageSync(message)
-        : sendMessage(message);
-    } else {
-      taskMode === TaskMode.SYNC
-        ? repeatMessageSync(message)
-        : repeatMessage(message);
-    }
-    setMessage("");
-  }, [
-    taskType,
-    taskMode,
-    message,
-    sendMessage,
-    sendMessageSync,
-    repeatMessage,
-    repeatMessageSync,
-  ]);
 
+interface TextInputProps {
+  /** "gestor-cobranza" | "bcg-product" | "volcano" */
+  avatarType: string
+}
+
+export const TextInput: React.FC<TextInputProps> = ({ avatarType }) => {
+  // 🟣 Store: sincronizamos avatarType global
+  const { currentAvatarType, setCurrentAvatarType } = useAvatarStore()
+
+  // Si cambia el prop, actualizamos el store
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Enter") {
-        handleSend();
+    if (avatarType && avatarType !== currentAvatarType) {
+      setCurrentAvatarType(avatarType as any)
+    }
+  }, [avatarType, currentAvatarType, setCurrentAvatarType])
+
+  // 👇 Router: Volcano => TALK (SDK), Gestor/BCG => REPEAT (API)
+  const { sendMessageToAPI } = useTextChat(avatarType as any)
+  const { startListening, stopListening } = useConversationState()
+  const [message, setMessage] = useState("")
+
+  const handleSend = useCallback(async () => {
+    const trimmed = message.trim()
+    if (!trimmed) return
+
+    // 🔹 UX: limpiar input INMEDIATAMENTE para sensación de rapidez
+    setMessage("")
+
+    // 🔹 El hook agrega el mensaje al historial y enruta TALK/REPEAT según avatarType
+    await sendMessageToAPI(trimmed)
+  }, [message, sendMessageToAPI])
+
+  // Enter para enviar
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault()
+        handleSend()
       }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleSend]);
-
-  const previousText = usePrevious(message);
-
-  useEffect(() => {
-    if (!previousText && message) {
-      startListening();
-    } else if (previousText && !message) {
-      stopListening();
     }
-  }, [message, previousText, startListening, stopListening]);
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [handleSend])
+
+  // Mantener indicadores de “escuchando” si quieres animaciones de UI
+  const prev = usePrevious(message)
+  useEffect(() => {
+    if (!prev && message) startListening()
+    else if (prev && !message) stopListening()
+  }, [message, prev, startListening, stopListening])
 
   return (
     <div className="flex flex-row gap-2 items-end w-full">
-      <Select
-        isSelected={(option) => option === taskType}
-        options={Object.values(TaskType)}
-        renderOption={(option) => option.toUpperCase()}
-        value={taskType.toUpperCase()}
-        onSelect={setTaskType}
-      />
-      <Select
-        isSelected={(option) => option === taskMode}
-        options={Object.values(TaskMode)}
-        renderOption={(option) => option.toUpperCase()}
-        value={taskMode.toUpperCase()}
-        onSelect={setTaskMode}
-      />
       <Input
         className="min-w-[500px]"
-        placeholder={`Type something for the avatar to ${taskType === TaskType.REPEAT ? "repeat" : "respond"}...`}
+        placeholder={`Escribe tu mensaje para ${avatarType}…`}
         value={message}
         onChange={setMessage}
       />
-      <Button className="!p-2" onClick={handleSend}>
+      <Button className="!p-2" onClick={handleSend} disabled={!message.trim()}>
         <SendIcon size={20} />
       </Button>
     </div>
-  );
-};
+  )
+}

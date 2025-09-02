@@ -25,9 +25,13 @@ import { useAvatarStore } from "../store/avatarStore"
 
 import { STT_LANGUAGE_LIST } from "../app/lib/constants"
 
+// =====================
+// CONFIG
+// =====================
+
 const DEFAULT_CONFIG: StartAvatarRequest = {
   quality: AvatarQuality.Low,
-  avatarName: "ea745510dfc64dfc9afce9c443943828",
+  avatarName: "ea745510dfc64dfc9afce9c443943828", // Default avatar ID (el mismo que usas en otros)
   knowledgeId: undefined,
   voice: {
     rate: 1.5,
@@ -36,6 +40,20 @@ const DEFAULT_CONFIG: StartAvatarRequest = {
   },
   language: "en",
   voiceChatTransport: VoiceChatTransport.WEBSOCKET,
+}
+
+/** 👇 Registramos los avatares disponibles en UI */
+const AVATAR_IDS = {
+  "gestor-cobranza": "ea745510dfc64dfc9afce9c443943828",
+  "bcg-product": "ea745510dfc64dfc9afce9c443943828",
+  // 👇 Nuevo avatar Volcano (usa el mismo avatarName, lo importante es el knowledgeId)
+  volcano: "ea745510dfc64dfc9afce9c443943828",
+} as const
+
+/** 👇 Knowledge IDs por avatar “knowledge-driven” */
+const KNOWLEDGE_IDS: Partial<Record<keyof typeof AVATAR_IDS, string | undefined>> = {
+  volcano: "9f09452d95724ae28de9e474d23f0825", // 👈 Volcano KB
+  // otros avatares con knowledge en el futuro...
 }
 
 interface InteractiveAvatarProps {
@@ -47,9 +65,19 @@ interface InteractiveAvatarProps {
 function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatarProps) {
   const { initAvatar, startAvatar, stopAvatar, sessionState, stream } = useStreamingAvatarSession()
   const { startVoiceChat } = useVoiceChat()
-  const { gestorCobranza, bcgProduct } = useAvatarStore()
+  const { gestorCobranza, bcgProduct, volcano, setCurrentAvatarType, clearAllSessions } = useAvatarStore()
+  useEffect(() => {
+    setCurrentAvatarType(selectedDemo.id as "gestor-cobranza" | "bcg-product" | "volcano")
+  }, [selectedDemo.id, setCurrentAvatarType])
 
-  const [config, setConfig] = useState<StartAvatarRequest>(DEFAULT_CONFIG)
+ 
+  // Config inicial: avatarName y knowledgeId según selectedDemo.id
+  const [config, setConfig] = useState<StartAvatarRequest>({
+    ...DEFAULT_CONFIG,
+    avatarName: AVATAR_IDS[selectedDemo.id as keyof typeof AVATAR_IDS] || DEFAULT_CONFIG.avatarName,
+    knowledgeId: KNOWLEDGE_IDS[selectedDemo.id as keyof typeof AVATAR_IDS],
+  })
+
   const mediaStream = useRef<HTMLVideoElement>(null)
 
   const getCurrentSession = () => {
@@ -58,6 +86,8 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
         return gestorCobranza
       case "bcg-product":
         return bcgProduct
+      case "volcano":
+        return volcano
       default:
         return null
     }
@@ -78,21 +108,9 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
   }
 
   async function fetchAccessToken() {
-    try {
-      const response = await fetch("/api/get-access-token", {
-        method: "POST",
-      })
-      const token = await response.text()
-
-      console.log("[v0] Access Token:", token)
-      console.log("[v0] Form Data:", formData)
-      console.log("[v0] Current Session:", currentSession)
-
-      return token
-    } catch (error) {
-      console.error("[v0] Error fetching access token:", error)
-      throw error
-    }
+    const response = await fetch("/api/get-access-token", { method: "POST" })
+    const token = await response.text()
+    return token
   }
 
   const startSessionV2 = useMemoizedFn(async (isVoiceChat: boolean) => {
@@ -101,39 +119,19 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
       const avatar = initAvatar(newToken)
 
       avatar.on(StreamingEvents.AVATAR_START_TALKING, (e) => {
-        console.log("[v0] Avatar started talking", e)
+        console.log("[Avatar] start talking", e)
       })
       avatar.on(StreamingEvents.AVATAR_STOP_TALKING, (e) => {
-        console.log("[v0] Avatar stopped talking", e)
+        console.log("[Avatar] stop talking", e)
       })
       avatar.on(StreamingEvents.STREAM_DISCONNECTED, () => {
-        console.log("[v0] Stream disconnected")
+        console.log("[Avatar] Stream disconnected")
       })
-      avatar.on(StreamingEvents.STREAM_READY, (event) => {
-        console.log("[v0] >>>>> Stream ready:", event.detail)
-
+      avatar.on(StreamingEvents.STREAM_READY, async () => {
+        // Si tienes un mensaje de bienvenida por sesión, puedes hablarlo:
         if (currentSession?.message) {
-          console.log("[v0] Enviando mensaje inicial:", currentSession.message)
           avatar.speak({ text: currentSession.message })
         }
-      })
-      avatar.on(StreamingEvents.USER_START, (event) => {
-        console.log("[v0] >>>>> User started talking:", event)
-      })
-      avatar.on(StreamingEvents.USER_STOP, (event) => {
-        console.log("[v0] >>>>> User stopped talking:", event)
-      })
-      avatar.on(StreamingEvents.USER_END_MESSAGE, (event) => {
-        console.log("[v0] >>>>> User end message:", event)
-      })
-      avatar.on(StreamingEvents.USER_TALKING_MESSAGE, (event) => {
-        console.log("[v0] >>>>> User talking message:", event)
-      })
-      avatar.on(StreamingEvents.AVATAR_TALKING_MESSAGE, (event) => {
-        console.log("[v0] >>>>> Avatar talking message:", event)
-      })
-      avatar.on(StreamingEvents.AVATAR_END_MESSAGE, (event) => {
-        console.log("[v0] >>>>> Avatar end message:", event)
       })
 
       await startAvatar(config)
@@ -142,7 +140,7 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
         await startVoiceChat()
       }
     } catch (error) {
-      console.error("[v0] Error starting avatar session:", error)
+      console.error("[Avatar] Error starting session:", error)
     }
   })
 
@@ -169,9 +167,7 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
             <div className="flex flex-col gap-4 w-full py-8 px-4 items-center">
               <div className="flex flex-col gap-4 w-[400px]">
                 <div className="flex items-center gap-3 mb-4">
-                  <Button onClick={onBack} className="text-sm px-3 py-1">
-                    ← Volver
-                  </Button>
+                  <Button onClick={onBack} className="text-sm px-3 py-1">← Volver</Button>
                   <h2 className="text-white text-xl font-semibold">{selectedDemo.name}</h2>
                 </div>
 
@@ -179,15 +175,13 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
                   <div className="bg-zinc-800 p-3 rounded-lg mb-4">
                     <h3 className="text-zinc-300 text-sm font-medium mb-2">Sesión Activa:</h3>
                     <div className="text-zinc-400 text-xs space-y-1">
-                      <div>
-                        <strong>Session ID:</strong> {currentSession.sessionId}
-                      </div>
-                      <div>
-                        <strong>Mensaje inicial:</strong> {currentSession.message}
-                      </div>
-                      <div>
-                        <strong>Timestamp:</strong> {new Date(currentSession.timestamp).toLocaleString()}
-                      </div>
+                      <div><strong>Tipo:</strong> {selectedDemo.id}</div>
+                      <div><strong>Session ID:</strong> {currentSession.sessionId}</div>
+                      {"knowledgeId" in currentSession && (
+                        <div><strong>Knowledge ID:</strong> {(currentSession as any).knowledgeId}</div>
+                      )}
+                      <div><strong>Mensaje inicial:</strong> {currentSession.message}</div>
+                      <div><strong>Timestamp:</strong> {new Date(currentSession.timestamp).toLocaleString()}</div>
                     </div>
                   </div>
                 )}
@@ -237,7 +231,7 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
         </div>
         <div className="flex flex-col gap-3 items-center justify-center p-4 border-t border-zinc-700 w-full">
           {sessionState === StreamingAvatarSessionState.CONNECTED ? (
-            <AvatarControls />
+            <AvatarControls  />
           ) : sessionState === StreamingAvatarSessionState.INACTIVE ? (
             <div className="flex flex-row gap-4">
               <Button onClick={() => startSessionV2(true)}>Iniciar Chat de Voz</Button>

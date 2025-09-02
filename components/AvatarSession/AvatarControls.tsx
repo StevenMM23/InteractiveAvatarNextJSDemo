@@ -1,21 +1,22 @@
-import { ToggleGroup, ToggleGroupItem } from "@radix-ui/react-toggle-group";
-import React from "react";
+"use client"
 
-import { useVoiceChat } from "../logic/useVoiceChat";
-import { Button } from "../Button";
-import { useInterrupt } from "../logic/useInterrupt";
+import { ToggleGroup, ToggleGroupItem } from "@radix-ui/react-toggle-group"
+import type React from "react"
 
-import { AudioInput } from "./AudioInput";
-import { TextInput } from "./TextInput";
+import { useVoiceChat } from "../logic/useVoiceChat"
+import { Button } from "../Button"
+import { useInterrupt } from "../logic/useInterrupt"
+
+import { AudioInput } from "./AudioInput"
+import { TextInput } from "./TextInput"
+import { useAvatarStore } from "../../store/avatarStore"
 
 export const AvatarControls: React.FC = () => {
-  const {
-    isVoiceChatLoading,
-    isVoiceChatActive,
-    startVoiceChat,
-    stopVoiceChat,
-  } = useVoiceChat();
-  const { interrupt } = useInterrupt();
+  // 👇 Leemos y seteamos el avatar seleccionado desde el store
+  const { currentAvatarType, setCurrentAvatarType } = useAvatarStore()
+  const { isVoiceChatLoading, isVoiceChatActive, startVoiceChat, stopVoiceChat } =
+    useVoiceChat()
+  const { interrupt } = useInterrupt()
 
   return (
     <div className="flex flex-col gap-3 relative w-full items-center">
@@ -26,13 +27,9 @@ export const AvatarControls: React.FC = () => {
         value={isVoiceChatActive || isVoiceChatLoading ? "voice" : "text"}
         onValueChange={(value) => {
           if (value === "voice" && !isVoiceChatActive && !isVoiceChatLoading) {
-            startVoiceChat();
-          } else if (
-            value === "text" &&
-            isVoiceChatActive &&
-            !isVoiceChatLoading
-          ) {
-            stopVoiceChat();
+            startVoiceChat()
+          } else if (value === "text" && isVoiceChatActive && !isVoiceChatLoading) {
+            stopVoiceChat()
           }
         }}
       >
@@ -49,12 +46,19 @@ export const AvatarControls: React.FC = () => {
           Text Chat
         </ToggleGroupItem>
       </ToggleGroup>
-      {isVoiceChatActive || isVoiceChatLoading ? <AudioInput /> : <TextInput />}
+
+      {/* 👇 Renderizamos input según modo */}
+      {isVoiceChatActive || isVoiceChatLoading ? (
+        <AudioInput />
+      ) : (
+        <TextInput avatarType={currentAvatarType || "gestor-cobranza"} />
+      )}
+
       <div className="absolute top-[-70px] right-3">
         <Button className="!bg-zinc-700 !text-white" onClick={interrupt}>
           Interrupt
         </Button>
       </div>
     </div>
-  );
-};
+  )
+}

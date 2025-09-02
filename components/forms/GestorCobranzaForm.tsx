@@ -53,7 +53,7 @@ export function GestorCobranzaForm({ onSubmit, onBack }: GestorCobranzaFormProps
 
       console.log("[v0] Enviando datos a API Gestor Cobranza:", apiPayload)
 
-      const response = await fetch("http://44.203.3.232:8002/start", {
+      const response = await fetch("/api/gestor-cobranza", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -1,10 +1,12 @@
-export { useStreamingAvatarSession } from "@/components/logic/useStreamingAvatarSession"
-export { useVoiceChat } from "@/components/logic/useVoiceChat"
-export { useConnectionQuality } from "@/components/logic/useConnectionQuality"
-export { useMessageHistory } from "@/components/logic/useMessageHistory"
-export { useInterrupt } from "@/components/logic/useInterrupt"
+export { useStreamingAvatarSession } from "./useStreamingAvatarSession"
+export { useVoiceChat } from "./useVoiceChat"
+export { useConnectionQuality } from "./useConnectionQuality"
+export { useMessageHistory } from "./useMessageHistory"
+export { useInterrupt } from "./useInterrupt"
+export { useTextChat } from "./useTextChat"
+export { useConversationState } from "./useConversationState"
 export {
   StreamingAvatarSessionState,
   StreamingAvatarProvider,
   MessageSender,
-} from "@/components/logic/context"
+} from "./context"
