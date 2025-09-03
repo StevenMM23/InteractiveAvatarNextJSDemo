@@ -3,35 +3,49 @@ import { GestorCobranzaSchema, BCGProductSchema } from "@/schemas/validation"
 
 // Demo registry - easy to add new demos
 export const demoRegistry: DemoDefinition[] = [
-  // {
-  //   id: "volcano",
-  //   name: "Volcano Innovation Summit",
-  //   description: "Avatar con base de conocimiento integrada sobre el Volcano Innovation Summit.",
-  //   requiresForm: false,
-  //   icon: "Flame",
-  //   avatarConfig: {
-  //     sessionType: "voice",
-  //     autoStartMicrophone: true,
-  //     enableMute: true,
-  //     greeting:
-  //       "¡Hola! Soy el asistente del Volcano Innovation Summit. ¿Quieres saber sobre agenda, speakers o startups?",
-  //   },
-  // },
+  {
+    id: "volcano",
+    name: "Volcano Innovation Summit",
+    description: "Avatar con base de conocimiento integrada sobre el Volcano Innovation Summit.",
+    requiresForm: false,
+    icon: "Flame",
+    avatarConfig: {
+      sessionType: "voice",
+      autoStartMicrophone: true,
+      enableMute: true,
+      greeting:
+        "¡Hola! Soy el asistente del Volcano Innovation Summit. ¿Quieres saber sobre agenda, speakers o startups?",
+    },
+  },
 
-  // {
-  //   id: "gbm-onboarding",
-  //   name: "GBM Onboarding",
-  //   description: "Avatar especializado en inducción corporativa de GBM con base de conocimiento integrada",
-  //   requiresForm: false,
-  //   icon: "GraduationCap",
-  //   avatarConfig: {
-  //     sessionType: "voice",
-  //     autoStartMicrophone: true,
-  //     enableMute: true,
-  //     greeting:
-  //       "Bienvenido a GBM. Estoy aquí para acompañarte en tu proceso de inducción corporativa. ¿Te gustaría conocer sobre nuestra historia, misión, valores o cultura organizacional?",
-  //   },
-  // },
+  {
+    id: "gbm-onboarding",
+    name: "GBM Onboarding",
+    description: "Avatar especializado en inducción corporativa de GBM con base de conocimiento integrada",
+    requiresForm: false,
+    icon: "GraduationCap",
+    avatarConfig: {
+      sessionType: "voice",
+      autoStartMicrophone: true,
+      enableMute: true,
+      greeting:
+        "Bienvenido a GBM. Estoy aquí para acompañarte en tu proceso de inducción corporativa. ¿Te gustaría conocer sobre nuestra historia, misión, valores o cultura organizacional?",
+    },
+  },
+  {
+    id: "microsoft-services",
+    name: "Microsoft Azure AI Services",
+    description: "Avatar con base de conocimiento integrada sobre los servicios de inteligencia artificial de Azure.",
+    requiresForm: false,
+    icon: "Cloud",
+    avatarConfig: {
+      sessionType: "voice",
+      autoStartMicrophone: true,
+      enableMute: true,
+      greeting:
+        "Hola, soy tu asistente de Microsoft Azure AI Services. Puedo contarte sobre nuestras soluciones de inteligencia artificial, ¿quieres empezar?",
+    },
+  },
   {
     id: "gestor-cobranza",
     name: "Gestor de Cobranza",
@@ -46,19 +60,7 @@ export const demoRegistry: DemoDefinition[] = [
       greeting: "Hola, soy tu asistente de cobranza. ¿En qué puedo ayudarte hoy?",
     },
   },
-  // {
-  //   id: 'general-chat',
-  //   name: 'Chat General',
-  //   description: 'Conversación libre sin formulario previo',
-  //   requiresForm: false,
-  //   icon: 'MessageCircle',
-  //   avatarConfig: {
-  //     sessionType: 'voice',
-  //     autoStartMicrophone: true,
-  //     enableMute: true,
-  //     greeting: '¡Hola! Estoy aquí para conversar contigo. ¿De qué te gustaría hablar?'
-  //   }
-  // },
+
   {
     id: "bcg-product",
     name: "BCG – Análisis de portafolio",

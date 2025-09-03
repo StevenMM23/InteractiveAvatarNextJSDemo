@@ -1,36 +1,61 @@
-"use client"
+"use client";
 
-import { ToggleGroup, ToggleGroupItem } from "@radix-ui/react-toggle-group"
-import type React from "react"
+import { ToggleGroup, ToggleGroupItem } from "@radix-ui/react-toggle-group";
+import React, { useEffect, useState } from "react";
 
-import { useVoiceChat } from "../logic/useVoiceChat"
-import { Button } from "../Button"
-import { useInterrupt } from "../logic/useInterrupt"
+import { useVoiceChat } from "../logic/useVoiceChat";
+import { Button } from "../Button";
+import { useInterrupt } from "../logic/useInterrupt";
+import { AudioInput } from "./AudioInput";
+import { TextInput } from "./TextInput";
+import { useAvatarStore } from "../../store/avatarStore";
 
-import { AudioInput } from "./AudioInput"
-import { TextInput } from "./TextInput"
-import { useAvatarStore } from "../../store/avatarStore"
+export const AvatarControls: React.FC<{ avatarType: string }> = ({
+  avatarType,
+}) => {
+  const { currentAvatarType } = useAvatarStore();
+  const {
+    isVoiceChatLoading,
+    isVoiceChatActive,
+    startVoiceChat,
+    stopVoiceChat,
+  } = useVoiceChat(avatarType);
 
-export const AvatarControls: React.FC = () => {
-  // 👇 Leemos y seteamos el avatar seleccionado desde el store
-  const { currentAvatarType, setCurrentAvatarType } = useAvatarStore()
-  const { isVoiceChatLoading, isVoiceChatActive, startVoiceChat, stopVoiceChat } =
-    useVoiceChat()
-  const { interrupt } = useInterrupt()
+  const { interrupt } = useInterrupt();
+
+  // Estado local para controlar el toggle manualmente
+  const [mode, setMode] = useState<"voice" | "text">("text");
+
+  // 🔄 Sincronizamos el toggle con el estado real de voice chat
+  useEffect(() => {
+    if (isVoiceChatActive || isVoiceChatLoading) {
+      setMode("voice");
+    } else {
+      setMode("text");
+    }
+  }, [isVoiceChatActive, isVoiceChatLoading]);
 
   return (
     <div className="flex flex-col gap-3 relative w-full items-center">
       <ToggleGroup
-        className={`bg-zinc-700 rounded-lg p-1 ${isVoiceChatLoading ? "opacity-50" : ""}`}
+        className={`bg-zinc-700 rounded-lg p-1 ${
+          isVoiceChatLoading ? "opacity-50" : ""
+        }`}
         disabled={isVoiceChatLoading}
         type="single"
-        value={isVoiceChatActive || isVoiceChatLoading ? "voice" : "text"}
+        value={mode}
         onValueChange={(value) => {
+          if (!value) return;
           if (value === "voice" && !isVoiceChatActive && !isVoiceChatLoading) {
-            startVoiceChat()
-          } else if (value === "text" && isVoiceChatActive && !isVoiceChatLoading) {
-            stopVoiceChat()
+            startVoiceChat();
+          } else if (
+            value === "text" &&
+            isVoiceChatActive &&
+            !isVoiceChatLoading
+          ) {
+            stopVoiceChat();
           }
+          setMode(value as "voice" | "text");
         }}
       >
         <ToggleGroupItem
@@ -47,18 +72,19 @@ export const AvatarControls: React.FC = () => {
         </ToggleGroupItem>
       </ToggleGroup>
 
-      {/* 👇 Renderizamos input según modo */}
-      {isVoiceChatActive || isVoiceChatLoading ? (
-        <AudioInput />
+      {/* Input dinámico */}
+      {mode === "voice" ? (
+        <AudioInput avatarType={avatarType} />
       ) : (
-        <TextInput avatarType={currentAvatarType || "gestor-cobranza"} />
+        <TextInput avatarType={currentAvatarType || avatarType} />
       )}
 
+      {/* Botón de interrupción */}
       <div className="absolute top-[-70px] right-3">
         <Button className="!bg-zinc-700 !text-white" onClick={interrupt}>
           Interrupt
         </Button>
       </div>
     </div>
-  )
-}
+  );
+};

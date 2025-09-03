@@ -1,16 +1,16 @@
 "use client"
 
-import { useCallback, useRef, useEffect } from "react"
-import { useAvatarStore } from "../../store/avatarStore"
-import { useStreamingAvatarContext } from "./context"
+import { useCallback, useEffect, useRef } from "react"
 import { TaskType } from "@heygen/streaming-avatar"
 import axios from "axios"
+
+import { useStreamingAvatarContext } from "./context"
+import { useAvatarStore } from "../../store/avatarStore"
 
 interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList
   resultIndex: number
 }
-
 interface SpeechRecognition extends EventTarget {
   continuous: boolean
   interimResults: boolean
@@ -23,7 +23,6 @@ interface SpeechRecognition extends EventTarget {
   onend: ((event: Event) => void) | null
   onerror: ((event: Event) => void) | null
 }
-
 declare global {
   interface Window {
     SpeechRecognition: new () => SpeechRecognition
@@ -31,11 +30,10 @@ declare global {
   }
 }
 
-const isBCGSession = (session: any): session is import("../../store/avatarStore").BCGSession => {
-  return session && "conversationId" in session && "selectedProduct" in session
-}
+const isBCGSession = (session: any): session is import("../../store/avatarStore").BCGSession =>
+  session && "conversationId" in session && "selectedProduct" in session
 
-export const useVoiceChat = () => {
+export const useVoiceChat = (avatarType = "gestor-cobranza") => {
   const {
     avatarRef,
     isMuted,
@@ -47,222 +45,198 @@ export const useVoiceChat = () => {
   } = useStreamingAvatarContext()
 
   const { getSession, currentAvatarType } = useAvatarStore()
+  const isActive = avatarType === currentAvatarType
 
+  // Siempre inicializamos hooks
   const speechRecognitionRef = useRef<SpeechRecognition | null>(null)
   const isAvatarSpeakingRef = useRef(false)
-  const lastAvatarResponseRef = useRef("")
 
-  // ✅ validación mínima de transcript
-  const isValidTranscript = (transcript: string): boolean => {
-    const clean = transcript.replace(/[^\w\sáéíóúüñÁÉÍÓÚÜÑ]/g, "").trim()
+  const isValidTranscript = (t: string) => {
+    const clean = t.replace(/[^\w\sáéíóúüñÁÉÍÓÚÜÑ]/g, "").trim()
     const validShort = ["si", "sí", "no", "ok"]
     if (validShort.includes(clean.toLowerCase())) return true
     if (clean.length < 3) return false
-    const noiseWords = ["ah", "eh", "um", "uh", "mm", "hmm"]
-    if (noiseWords.includes(clean.toLowerCase())) return false
+    const noise = ["ah", "eh", "um", "uh", "mm", "hmm"]
+    if (noise.includes(clean.toLowerCase())) return false
     return true
   }
 
   const pauseSpeechRecognition = useCallback(() => {
-    if (speechRecognitionRef.current && !isMuted) {
-      console.log("[v0] SPEECH - Pausando reconocimiento")
-      speechRecognitionRef.current.stop()
+    if (!isActive) return
+    try {
+      speechRecognitionRef.current?.stop()
       isAvatarSpeakingRef.current = true
-    }
-  }, [isMuted])
+    } catch { }
+  }, [isActive])
 
   const resumeSpeechRecognition = useCallback(() => {
+    if (!isActive) return
     if (speechRecognitionRef.current && !isMuted && isVoiceChatActive) {
-      console.log("[v0] SPEECH - Reanudando reconocimiento")
       setTimeout(() => {
-        if (speechRecognitionRef.current && !isMuted) {
-          speechRecognitionRef.current.start()
-        }
-        isAvatarSpeakingRef.current = false
+        try {
+          speechRecognitionRef.current?.start()
+          isAvatarSpeakingRef.current = false
+        } catch { }
       }, 1000)
     }
-  }, [isMuted, isVoiceChatActive])
+  }, [isMuted, isVoiceChatActive, isActive])
 
-  // 🎤 SpeechRecognition
+  // 🎤 Web Speech / SDK según avatar
   useEffect(() => {
-    if (typeof window === "undefined") return
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) return
+    if (!isActive) {
+      console.log(`⏸️ [useVoiceChat] ${avatarType} ignorado. Activo: ${currentAvatarType}`)
+      return
+    }
 
-    speechRecognitionRef.current = new SpeechRecognition()
+    const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
+    if (isKnowledge) {
+      console.log("🟦 [useVoiceChat] ES SDK, no se inicializa Web Speech:", avatarType)
+      return
+    }
+
+    if (typeof window === "undefined") return
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) return
+
+    console.log("🟩 [useVoiceChat] ES WEB SPEECH, inicializando para:", avatarType)
+    speechRecognitionRef.current = new SR()
     speechRecognitionRef.current.continuous = true
     speechRecognitionRef.current.interimResults = true
     speechRecognitionRef.current.lang = "es-ES"
 
     speechRecognitionRef.current.onresult = async (event) => {
-      const avatarType = currentAvatarType || "gestor-cobranza"
+      if (!isActive) return
+      const last = event.results[event.results.length - 1]
+      const transcript = last[0].transcript.trim()
 
-      const lastResult = event.results[event.results.length - 1]
-      const transcript = lastResult[0].transcript.trim()
-
-      // 🚨 Usuario empezó a hablar (interim) → interrumpir avatar
-      if (!lastResult.isFinal && transcript.length > 0) {
-        console.log("[v0] 🎤 SPEECH - Usuario empezó a hablar:", transcript)
-        if (avatarRef.current?.interrupt) {
-          avatarRef.current.interrupt()
-        } else {
-          avatarRef.current?.closeVoiceChat()
-        }
+      if (!last.isFinal && transcript.length > 0) {
+        avatarRef.current?.interrupt?.()
         isAvatarSpeakingRef.current = false
         return
       }
 
-      // 🚨 Usuario terminó de hablar (final)
-      if (lastResult.isFinal) {
-        console.log("[v0] 🎤 SPEECH - Final transcript:", transcript)
+      if (!last.isFinal) return
+      if (!isValidTranscript(transcript)) return
+      if (!avatarRef.current) return
+      pauseSpeechRecognition()
 
-        if (!isValidTranscript(transcript)) {
-          console.log("[v0] 🎤 SPEECH - Transcript inválido, ignorado")
+      try {
+        let textToSpeak = ""
+
+        if (avatarType === "gestor-cobranza") {
+          const session = getSession("gestor-cobranza")
+          if (!session?.sessionId) return
+          const body = { session_id: session.sessionId, user_input: transcript }
+          const res = await axios.post("/api/gestor-cobranza/chat", body, { headers: { "Content-Type": "application/json" }, timeout: 30000 })
+          textToSpeak = res.data?.agent_response || ""
+        } else if (avatarType === "bcg-product") {
+          const session = getSession("bcg-product")
+          if (!session || !isBCGSession(session) || !session.conversationId) return
+          const body = { user_input: transcript, conversation_id: session.conversationId }
+          const res = await axios.post("/api/bcg/chat", body, { headers: { "Content-Type": "application/json" }, timeout: 30000 })
+          textToSpeak = res.data?.response || ""
+        }
+
+        if (["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)) {
+          await avatarRef.current?.speak({ text: transcript, taskType: TaskType.TALK })
+          console.log("🗣️ [useVoiceChat] TALK ejecutado con KB:", avatarType)
           return
         }
 
-        if (!avatarRef.current) return
-        pauseSpeechRecognition()
-
-        try {
-          let textToSpeak = ""
-
-          if (avatarType === "gestor-cobranza") {
-            const session = getSession("gestor-cobranza")
-            if (!session?.sessionId) {
-              console.error("[v0] GESTOR - No sessionId")
-              return
-            }
-            const body = { session_id: session.sessionId, user_input: transcript }
-            console.log("[v0] GESTOR - Request:", body)
-
-            const res = await axios.post("/api/gestor-cobranza/chat", body, {
-              headers: { "Content-Type": "application/json" },
-              timeout: 30000,
-            })
-            textToSpeak = res.data.agent_response || ""
-          }
-
-          if (avatarType === "bcg-product") {
-            const session = getSession("bcg-product")
-            if (!session || !isBCGSession(session) || !session.conversationId) {
-              console.error("[v0] BCG - No conversationId")
-              return
-            }
-            const body = { user_input: transcript, conversation_id: session.conversationId }
-            console.log("[v0] BCG - Request:", body)
-
-            const res = await axios.post("/api/bcg/chat", body, {
-              headers: { "Content-Type": "application/json" },
-              timeout: 30000,
-            })
-            textToSpeak = res.data.response || ""
-          }
-
-          if (textToSpeak) {
-            await avatarRef.current.speak({
-              text: textToSpeak,
-              taskType: TaskType.REPEAT,
-            })
-            lastAvatarResponseRef.current = textToSpeak.toLowerCase()
-            console.log("[v0] AVATAR - Repeated:", textToSpeak)
-          }
-        } catch (err) {
-          console.error("[v0] ❌ Error procesando transcript:", err)
+        if (textToSpeak) {
+          await avatarRef.current?.speak({ text: textToSpeak, taskType: TaskType.REPEAT })
         }
-
-        setTimeout(resumeSpeechRecognition, 2000)
+      } catch (err) {
+        console.error("[useVoiceChat] error:", err)
       }
+
+      setTimeout(resumeSpeechRecognition, 2000)
     }
 
-    speechRecognitionRef.current.onerror = (event) => {
-      console.error("[v0] ❌ SPEECH_ERROR:", event)
+    speechRecognitionRef.current.onerror = () => {
       if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
-        setTimeout(() => {
-          speechRecognitionRef.current?.start()
-        }, 3000)
+        setTimeout(() => speechRecognitionRef.current?.start(), 1500)
       }
     }
 
     speechRecognitionRef.current.onend = () => {
-      console.log("[v0] 🔚 SPEECH_END")
       if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
-        setTimeout(() => {
-          speechRecognitionRef.current?.start()
-        }, 1000)
+        setTimeout(() => speechRecognitionRef.current?.start(), 1000)
       }
     }
-  }, [avatarRef, pauseSpeechRecognition, resumeSpeechRecognition, isMuted, isVoiceChatActive, getSession, currentAvatarType])
 
-  // 🚀 Start Voice Chat
-  const startVoiceChat = useCallback(
-    async (isInputAudioMuted?: boolean) => {
-      const avatarType = currentAvatarType || "gestor-cobranza"
-      if (!avatarRef.current) return
-      setIsVoiceChatLoading(true)
+    return () => {
+      try { speechRecognitionRef.current?.stop() } catch { }
+      speechRecognitionRef.current = null
+    }
+  }, [avatarType, avatarRef, getSession, isMuted, isVoiceChatActive, pauseSpeechRecognition, resumeSpeechRecognition, isActive, currentAvatarType])
 
-      try {
-        if (avatarType === "gestor-cobranza" || avatarType === "bcg-product") {
-          if (speechRecognitionRef.current && !isInputAudioMuted) {
-            speechRecognitionRef.current.start()
-          }
-          setIsVoiceChatActive(true)
-          setIsMuted(!!isInputAudioMuted)
-        } else {
-          await avatarRef.current?.startVoiceChat({ isInputAudioMuted })
-          if (speechRecognitionRef.current && !isInputAudioMuted) {
-            speechRecognitionRef.current.start()
-          }
-          setIsVoiceChatActive(true)
-          setIsMuted(!!isInputAudioMuted)
+  // 🚀 start/stop/mute/unmute
+  const startVoiceChat = useCallback(async (isInputAudioMuted?: boolean) => {
+    if (!isActive || !avatarRef.current) return
+    setIsVoiceChatLoading(true)
+
+    try {
+      const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
+
+      if (isKnowledge) {
+        console.log("🟦 [useVoiceChat] Iniciando voice chat con SDK:", avatarType)
+        await avatarRef.current.startVoiceChat({ isInputAudioMuted })
+      } else {
+        console.log("🟩 [useVoiceChat] Iniciando voice chat con Web Speech:", avatarType)
+        if (speechRecognitionRef.current && !isInputAudioMuted) {
+          speechRecognitionRef.current.start()
         }
-      } catch (err) {
-        console.error("[v0] ❌ Error startVoiceChat:", err)
-      } finally {
-        setIsVoiceChatLoading(false)
       }
-    },
-    [avatarRef, setIsMuted, setIsVoiceChatActive, setIsVoiceChatLoading, currentAvatarType],
-  )
+      setIsVoiceChatActive(true)
+      setIsMuted(!!isInputAudioMuted)
+    } catch (err) {
+      console.error("[useVoiceChat] startVoiceChat error:", err)
+    } finally {
+      setIsVoiceChatLoading(false)
+    }
+  }, [isActive, avatarType, avatarRef, setIsVoiceChatLoading, setIsVoiceChatActive, setIsMuted])
 
-  // 🛑 Stop Voice Chat
   const stopVoiceChat = useCallback(() => {
-    if (!avatarRef.current) return
-    speechRecognitionRef.current?.stop()
-    avatarRef.current?.closeVoiceChat()
+    if (!isActive || !avatarRef.current) return
+    try { speechRecognitionRef.current?.stop() } catch { }
+    avatarRef.current.closeVoiceChat?.()
     setIsVoiceChatActive(false)
     setIsMuted(true)
-  }, [avatarRef, setIsMuted, setIsVoiceChatActive])
+  }, [isActive, avatarRef, setIsMuted, setIsVoiceChatActive])
 
-  // 🔇 Mute
   const muteInputAudio = useCallback(() => {
-    if (!avatarRef.current) return
-    speechRecognitionRef.current?.stop()
-    const mediaStream = (avatarRef.current as any).localStream
-    if (mediaStream) {
-      mediaStream.getAudioTracks().forEach(track => (track.enabled = false))
-    }
-    console.log("[v0] 🔇 Mic muted")
-    setIsMuted(true)
-  }, [avatarRef, setIsMuted])
+    if (!isActive || !avatarRef.current) return
+    const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
 
-  // 🔊 Unmute
-  const unmuteInputAudio = useCallback(() => {
-    if (!avatarRef.current) return
-    speechRecognitionRef.current?.start()
-    const mediaStream = (avatarRef.current as any).localStream
-    if (mediaStream) {
-      mediaStream.getAudioTracks().forEach(track => (track.enabled = true))
+    if (isKnowledge) {
+      avatarRef.current.muteInputAudio?.()
+    } else {
+      try { speechRecognitionRef.current?.stop() } catch { }
+      const mediaStream = (avatarRef.current as any).localStream
+      mediaStream?.getAudioTracks().forEach((t: MediaStreamTrack) => (t.enabled = false))
     }
-    console.log("[v0] 🎤 Mic unmuted")
+    setIsMuted(true)
+  }, [isActive, avatarType, avatarRef, setIsMuted])
+
+  const unmuteInputAudio = useCallback(() => {
+    if (!isActive || !avatarRef.current) return
+    const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
+
+    if (isKnowledge) {
+      avatarRef.current.unmuteInputAudio?.()
+    } else {
+      try { speechRecognitionRef.current?.start() } catch { }
+      const mediaStream = (avatarRef.current as any).localStream
+      mediaStream?.getAudioTracks().forEach((t: MediaStreamTrack) => (t.enabled = true))
+    }
     setIsMuted(false)
-  }, [avatarRef, setIsMuted])
+  }, [isActive, avatarType, avatarRef, setIsMuted])
 
   const setSpeechLanguage = useCallback((language: string) => {
-    if (speechRecognitionRef.current) {
-      speechRecognitionRef.current.lang = language
-    }
-  }, [])
+    if (!isActive) return
+    if (speechRecognitionRef.current) speechRecognitionRef.current.lang = language
+  }, [isActive])
 
   return {
     startVoiceChat,
