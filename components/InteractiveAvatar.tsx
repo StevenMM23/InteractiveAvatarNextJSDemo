@@ -24,6 +24,7 @@ import type { DemoDefinition } from "../types/demo"
 import { useAvatarStore } from "../store/avatarStore"
 
 import { STT_LANGUAGE_LIST } from "../app/lib/constants"
+import { ImageModal } from "./ImageModal"
 
 const DEFAULT_CONFIG: StartAvatarRequest = {
   quality: AvatarQuality.High,
@@ -42,7 +43,7 @@ const DEFAULT_CONFIG: StartAvatarRequest = {
 const AVATAR_IDS = {
   "gestor-cobranza": "ea745510dfc64dfc9afce9c443943828",
   "bcg-product": "ea745510dfc64dfc9afce9c443943828",
-  "volcano": "7f53aab9ad9848248caf19ef21aa3b3e",
+  volcano: "7f53aab9ad9848248caf19ef21aa3b3e",
   "gbm-onboarding": "ea745510dfc64dfc9afce9c443943828",
   "microsoft-services": "7f53aab9ad9848248caf19ef21aa3b3e",
 } as const
@@ -61,7 +62,8 @@ interface InteractiveAvatarProps {
 }
 
 function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatarProps) {
-  const { initAvatar, startAvatar, stopAvatar, sessionState, stream } = useStreamingAvatarSession()
+  const { initAvatar, startAvatar, stopAvatar, sessionState, stream } =
+    useStreamingAvatarSession()
   const { currentAvatarType, setCurrentAvatarType, getSession } = useAvatarStore()
 
   // ✅ Mantener avatar activo en el store
@@ -76,16 +78,21 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
   // Config inicial del avatar
   const [config, setConfig] = useState<StartAvatarRequest>({
     ...DEFAULT_CONFIG,
-    avatarName: AVATAR_IDS[selectedDemo.id as keyof typeof AVATAR_IDS] || DEFAULT_CONFIG.avatarName,
+    avatarName:
+      AVATAR_IDS[selectedDemo.id as keyof typeof AVATAR_IDS] ||
+      DEFAULT_CONFIG.avatarName,
     knowledgeId: KNOWLEDGE_IDS[selectedDemo.id as keyof typeof AVATAR_IDS],
   })
 
   const mediaStream = useRef<HTMLVideoElement>(null)
   const currentSession = getSession(selectedDemo.id)
 
-  const handleLanguageChange = (language: string) => setConfig((p) => ({ ...p, language }))
-  const handleQualityChange = (quality: AvatarQuality) => setConfig((p) => ({ ...p, quality }))
-  const handleTransportChange = (t: VoiceChatTransport) => setConfig((p) => ({ ...p, voiceChatTransport: t }))
+  const handleLanguageChange = (language: string) =>
+    setConfig((p) => ({ ...p, language }))
+  const handleQualityChange = (quality: AvatarQuality) =>
+    setConfig((p) => ({ ...p, quality }))
+  const handleTransportChange = (t: VoiceChatTransport) =>
+    setConfig((p) => ({ ...p, voiceChatTransport: t }))
 
   async function fetchAccessToken() {
     const response = await fetch("/api/get-access-token", { method: "POST" })
@@ -97,11 +104,18 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
       const newToken = await fetchAccessToken()
       const avatar = initAvatar(newToken)
 
-      avatar.on(StreamingEvents.AVATAR_START_TALKING, (e) => console.log("[Avatar] start talking", e))
-      avatar.on(StreamingEvents.AVATAR_STOP_TALKING, (e) => console.log("[Avatar] stop talking", e))
-      avatar.on(StreamingEvents.STREAM_DISCONNECTED, () => console.log("[Avatar] Stream disconnected"))
+      avatar.on(StreamingEvents.AVATAR_START_TALKING, (e) =>
+        console.log("[Avatar] start talking", e),
+      )
+      avatar.on(StreamingEvents.AVATAR_STOP_TALKING, (e) =>
+        console.log("[Avatar] stop talking", e),
+      )
+      avatar.on(StreamingEvents.STREAM_DISCONNECTED, () =>
+        console.log("[Avatar] Stream disconnected"),
+      )
       avatar.on(StreamingEvents.STREAM_READY, async () => {
-        if (currentSession?.message) avatar.speak({ text: currentSession.message })
+        if (currentSession?.message)
+          avatar.speak({ text: currentSession.message })
       })
 
       await startAvatar(config)
@@ -136,29 +150,54 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
             <div className="flex flex-col gap-4 w-full py-8 px-4 items-center">
               <div className="flex flex-col gap-4 w-[400px]">
                 <div className="flex items-center gap-3 mb-4">
-                  <Button onClick={onBack} className="text-sm px-3 py-1">← Volver</Button>
-                  <h2 className="text-white text-xl font-semibold">{selectedDemo.name}</h2>
+                  <Button onClick={onBack} className="text-sm px-3 py-1">
+                    ← Volver
+                  </Button>
+                  <h2 className="text-white text-xl font-semibold">
+                    {selectedDemo.name}
+                  </h2>
                 </div>
 
                 {currentSession && (
                   <div className="bg-zinc-800 p-3 rounded-lg mb-4">
-                    <h3 className="text-zinc-300 text-sm font-medium mb-2">Sesión Activa:</h3>
+                    <h3 className="text-zinc-300 text-sm font-medium mb-2">
+                      Sesión Activa:
+                    </h3>
                     <div className="text-zinc-400 text-xs space-y-1">
-                      <div><strong>Tipo:</strong> {selectedDemo.id}</div>
-                      <div><strong>Session ID:</strong> {currentSession.sessionId}</div>
+                      <div>
+                        <strong>Tipo:</strong> {selectedDemo.id}
+                      </div>
+                      <div>
+                        <strong>Session ID:</strong> {currentSession.sessionId}
+                      </div>
                       {"knowledgeId" in currentSession && (
-                        <div><strong>Knowledge ID:</strong> {(currentSession as any).knowledgeId}</div>
+                        <div>
+                          <strong>Knowledge ID:</strong>{" "}
+                          {(currentSession as any).knowledgeId}
+                        </div>
                       )}
-                      <div><strong>Mensaje inicial:</strong> {currentSession.message}</div>
-                      <div><strong>Timestamp:</strong> {new Date(currentSession.timestamp).toLocaleString()}</div>
+                      <div>
+                        <strong>Mensaje inicial:</strong>{" "}
+                        {currentSession.message}
+                      </div>
+                      <div>
+                        <strong>Timestamp:</strong>{" "}
+                        {new Date(
+                          currentSession.timestamp,
+                        ).toLocaleString()}
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {formData && (
                   <div className="bg-zinc-800 p-3 rounded-lg mb-4">
-                    <h3 className="text-zinc-300 text-sm font-medium mb-2">Datos del formulario:</h3>
-                    <pre className="text-zinc-400 text-xs overflow-auto">{JSON.stringify(formData, null, 2)}</pre>
+                    <h3 className="text-zinc-300 text-sm font-medium mb-2">
+                      Datos del formulario:
+                    </h3>
+                    <pre className="text-zinc-400 text-xs overflow-auto">
+                      {JSON.stringify(formData, null, 2)}
+                    </pre>
                   </div>
                 )}
 
@@ -169,13 +208,19 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
                     isSelected={(option) => option.value === config.language}
                     options={STT_LANGUAGE_LIST}
                     renderOption={(option) => option.label}
-                    value={STT_LANGUAGE_LIST.find((o) => o.value === config.language)?.label}
+                    value={
+                      STT_LANGUAGE_LIST.find(
+                        (o) => o.value === config.language,
+                      )?.label
+                    }
                     onSelect={(o) => handleLanguageChange(o.value)}
                   />
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <label className="text-zinc-300 text-sm">Calidad de Video</label>
+                  <label className="text-zinc-300 text-sm">
+                    Calidad de Video
+                  </label>
                   <Select
                     isSelected={(option) => option === config.quality}
                     options={Object.values(AvatarQuality)}
@@ -186,7 +231,9 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <label className="text-zinc-300 text-sm">Transporte de Voz</label>
+                  <label className="text-zinc-300 text-sm">
+                    Transporte de Voz
+                  </label>
                   <Select
                     isSelected={(option) => option === config.voiceChatTransport}
                     options={Object.values(VoiceChatTransport)}
@@ -205,8 +252,12 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
             <AvatarControls avatarType={selectedDemo.id} />
           ) : sessionState === StreamingAvatarSessionState.INACTIVE ? (
             <div className="flex flex-row gap-4">
-              <Button onClick={() => startSessionV2(true)}>Iniciar Chat de Voz</Button>
-              <Button onClick={() => startSessionV2(false)}>Iniciar Chat de Texto</Button>
+              <Button onClick={() => startSessionV2(true)}>
+                Iniciar Chat de Voz
+              </Button>
+              <Button onClick={() => startSessionV2(false)}>
+                Iniciar Chat de Texto
+              </Button>
             </div>
           ) : (
             <LoadingIcon />
@@ -214,15 +265,34 @@ function InteractiveAvatar({ selectedDemo, formData, onBack }: InteractiveAvatar
         </div>
       </div>
 
-      {sessionState === StreamingAvatarSessionState.CONNECTED && <MessageHistory />}
+      {sessionState === StreamingAvatarSessionState.CONNECTED && (
+        <MessageHistory />
+      )}
     </div>
   )
 }
 
-export default function InteractiveAvatarWrapper({ selectedDemo, formData, onBack }: InteractiveAvatarProps) {
+export default function InteractiveAvatarWrapper({
+  selectedDemo,
+  formData,
+  onBack,
+}: InteractiveAvatarProps) {
+  // 👇 Aquí debes usar el store
+  const { isImageModalOpen, generatedImages, setImageModalOpen } =
+    useAvatarStore()
+
   return (
     <StreamingAvatarProvider basePath={process.env.NEXT_PUBLIC_BASE_API_URL}>
-      <InteractiveAvatar selectedDemo={selectedDemo} formData={formData} onBack={onBack} />
+      <InteractiveAvatar
+        selectedDemo={selectedDemo}
+        formData={formData}
+        onBack={onBack}
+      />
+
+      {/* 🚀 Modal de imagen */}
+      {isImageModalOpen && generatedImages.length > 0 && (
+        <ImageModal imageBase64={generatedImages.at(-1)!} />
+      )}
     </StreamingAvatarProvider>
   )
 }

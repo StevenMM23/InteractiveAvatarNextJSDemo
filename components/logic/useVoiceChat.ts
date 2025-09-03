@@ -133,8 +133,19 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           const session = getSession("bcg-product")
           if (!session || !isBCGSession(session) || !session.conversationId) return
           const body = { user_input: transcript, conversation_id: session.conversationId }
-          const res = await axios.post("/api/bcg/chat", body, { headers: { "Content-Type": "application/json" }, timeout: 30000 })
+          const res = await axios.post("/api/bcg/chat", body, {
+            headers: { "Content-Type": "application/json" },
+
+          })
+
           textToSpeak = res.data?.response || ""
+
+          // 🚀 Nuevo: si viene imagen, la guardamos en el store y abrimos modal
+          if (res.data?.image_base64) {
+            const { addBCGImage, setImageModalOpen } = useAvatarStore.getState()
+            addBCGImage(res.data.image_base64)
+            setImageModalOpen(true)
+          }
         }
 
         if (["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)) {

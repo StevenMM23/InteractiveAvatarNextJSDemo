@@ -5,6 +5,7 @@ import { useCallback } from "react"
 
 import { useStreamingAvatarContext } from "./context"
 import { getAvatarService } from "../../services/avatarServices"
+import { useAvatarStore } from "@/store/avatarStore"
 
 export const useTextChat = (avatarType = "gestor-cobranza") => {
   const { avatarRef, addUserMessage, isAvatarTalking } = useStreamingAvatarContext()
@@ -12,9 +13,19 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
   const sendMessageToAPI = useCallback(
     async (userInput: string) => {
       console.log("🎯 [useTextChat] ROUTER - avatarType:", avatarType)
-      addUserMessage(userInput)
 
-      // Interrumpe si el avatar ya está hablando
+      // 🌋/🟠 Knowledge-driven → TALK directo (SDK)
+      const isKnowledge =
+        avatarType === "volcano" ||
+        avatarType === "gbm-onboarding" ||
+        avatarType === "microsoft-services"
+
+      // 🟢/🔵 API-driven → agregar mensaje del usuario al historial
+      if (!isKnowledge) {
+        addUserMessage(userInput)
+      }
+
+      // Interrumpir si el avatar ya está hablando
       if (isAvatarTalking) {
         try {
           await avatarRef.current?.interrupt()
@@ -24,12 +35,6 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
       }
 
       try {
-        // 🌋/🟠 Knowledge-driven → TALK directo (SDK)
-        const isKnowledge =
-          avatarType === "volcano" ||
-          avatarType === "gbm-onboarding" ||
-          avatarType === "microsoft-services"
-
         if (isKnowledge) {
           if (!avatarRef.current) return
           console.log("[useTextChat] KNOWLEDGE - TALK via SDK")
@@ -49,7 +54,15 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
         let textToSpeak = ""
 
         if (avatarType === "bcg-product") {
-          textToSpeak = (response as { response: string })?.response ?? ""
+          const res = response as { response?: string; image_base64?: string }
+          textToSpeak = res.response ?? ""
+
+          // 🚀 Imagen recibida
+          if (res.image_base64) {
+            const { addBCGImage, setImageModalOpen } = useAvatarStore.getState()
+            addBCGImage(res.image_base64)
+            setImageModalOpen(true)
+          }
         } else {
           textToSpeak = (response as string) ?? ""
         }
@@ -61,7 +74,9 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
           taskType: TaskType.REPEAT,
           taskMode: TaskMode.ASYNC,
         })
-        if (speakResult && typeof (speakResult as any).then === "function") await speakResult
+        if (speakResult && typeof (speakResult as any).then === "function") {
+          await speakResult
+        }
       } catch (error) {
         console.error("❌ [useTextChat] Error:", error)
       }
@@ -73,7 +88,11 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
   const sendMessage = useCallback(
     (message: string) => {
       if (!avatarRef.current) return
-      avatarRef.current.speak({ text: message, taskType: TaskType.TALK, taskMode: TaskMode.ASYNC })
+      avatarRef.current.speak({
+        text: message,
+        taskType: TaskType.TALK,
+        taskMode: TaskMode.ASYNC,
+      })
     },
     [avatarRef],
   )
@@ -81,7 +100,11 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
   const sendMessageSync = useCallback(
     async (message: string) => {
       if (!avatarRef.current) return
-      return await avatarRef.current.speak({ text: message, taskType: TaskType.TALK, taskMode: TaskMode.SYNC })
+      return await avatarRef.current.speak({
+        text: message,
+        taskType: TaskType.TALK,
+        taskMode: TaskMode.SYNC,
+      })
     },
     [avatarRef],
   )
@@ -89,7 +112,11 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
   const repeatMessage = useCallback(
     (message: string) => {
       if (!avatarRef.current) return
-      return avatarRef.current.speak({ text: message, taskType: TaskType.REPEAT, taskMode: TaskMode.ASYNC })
+      return avatarRef.current.speak({
+        text: message,
+        taskType: TaskType.REPEAT,
+        taskMode: TaskMode.ASYNC,
+      })
     },
     [avatarRef],
   )
@@ -97,7 +124,11 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
   const repeatMessageSync = useCallback(
     async (message: string) => {
       if (!avatarRef.current) return
-      return await avatarRef.current.speak({ text: message, taskType: TaskType.REPEAT, taskMode: TaskMode.SYNC })
+      return await avatarRef.current.speak({
+        text: message,
+        taskType: TaskType.REPEAT,
+        taskMode: TaskMode.SYNC,
+      })
     },
     [avatarRef],
   )
