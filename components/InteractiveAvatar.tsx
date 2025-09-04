@@ -41,7 +41,7 @@ const DEFAULT_CONFIG: StartAvatarRequest = {
 
 const AVATAR_IDS = {
   "gestor-cobranza": "ea745510dfc64dfc9afce9c443943828",
-  "bcg-product": "ea745510dfc64dfc9afce9c443943828",
+  "bcg-product": "7f53aab9ad9848248caf19ef21aa3b3e",
   volcano: "7f53aab9ad9848248caf19ef21aa3b3e",
   "gbm-onboarding": "ea745510dfc64dfc9afce9c443943828",
   "microsoft-services": "7f53aab9ad9848248caf19ef21aa3b3e",

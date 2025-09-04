@@ -12,4 +12,6 @@ export interface DemoDefinition {
     greeting: string
   }
   isConfigurable?: boolean // Added configurable flag for avatars
+  status?: "ready" | "beta" | "coming-soon"  // 👈 nuevo campo opcional
+
 }

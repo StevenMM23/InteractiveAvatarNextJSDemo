@@ -7,6 +7,7 @@ import { Flame, GraduationCap, CreditCard, MessageCircle, TrendingUp, Settings }
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { AnimatedCard } from "./animated-card"
+import Image from "next/image"
 
 const iconMap = {
     Flame,
@@ -26,7 +27,26 @@ export function AvatarSelector({ onSelectAvatar, selectedAvatar }: AvatarSelecto
     return (
         <div className="min-h-screen bg-background">
             <div className="container mx-auto px-4 sm:px-8 lg:px-[--tv-padding] py-12">
-
+                <div className="flex justify-center mb-10">
+                    <div className="relative w-48 h-16 lg:w-72 lg:h-24">
+                        {/* Logo claro */}
+                        <Image
+                            src="/gbm_logo_azul.png"
+                            alt="GBM Logo Azul"
+                            fill
+                            className="object-contain block dark:hidden"
+                            priority
+                        />
+                        {/* Logo oscuro */}
+                        <Image
+                            src="/Logo-blanco-sin-fondo.png"
+                            alt="GBM Logo Blanco"
+                            fill
+                            className="object-contain hidden dark:block"
+                            priority
+                        />
+                    </div>
+                </div>
                 <div className="text-center mb-16 lg:mb-20 animate-fade-in">
                     <h1 className="text-5xl lg:text-7xl font-bold text-foreground mb-6 tracking-tight">Selecciona tu Avatar</h1>
                     <p className="text-2xl lg:text-3xl text-muted-foreground max-w-4xl mx-auto leading-relaxed">
@@ -62,6 +82,13 @@ export function AvatarSelector({ onSelectAvatar, selectedAvatar }: AvatarSelecto
                                         >
                                             {"Especialista"}
                                         </Badge>
+                                        {demo.status === "beta" && (
+                                            <Badge
+                                                variant="secondary"
+                                                className="bg-yellow-400 text-black text-lg px-4 py-2 "
+                                            >
+                                                En desarrollo
+                                            </Badge>)}
                                     </div>
 
                                     <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>

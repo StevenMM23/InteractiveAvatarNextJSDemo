@@ -59,6 +59,7 @@ export const demoRegistry: DemoDefinition[] = [
       enableMute: true,
       greeting: "Hola, soy tu asistente de cobranza. ¿En qué puedo ayudarte hoy?",
     },
+    status: "beta",
   },
 
   {
@@ -76,6 +77,7 @@ export const demoRegistry: DemoDefinition[] = [
       greeting:
         "Selecciona un producto para iniciar. Luego pide un análisis a la vez: comparar ventas por año, ver ventas anuales del producto, calcular BCG o generar reporte.",
     },
+    status: "beta",
   },
 ]
 
