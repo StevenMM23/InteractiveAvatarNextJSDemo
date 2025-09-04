@@ -1,9 +1,8 @@
 import type React from "react"
 import "@/styles/globals.css"
 import type { Metadata } from "next"
-import { Fira_Mono as FontMono, Mona_Sans as FontSans } from "next/font/google"
+import { Mona_Sans as FontSans } from "next/font/google"
 import { ThemeProvider } from "next-themes"
-import { ThemeToggle } from "@/components/ThemeToggle"
 
 const fontSans = FontSans({
   subsets: ["latin"],
@@ -12,14 +11,14 @@ const fontSans = FontSans({
 
 export const metadata: Metadata = {
   title: {
-    default: "HeyGen Interactive Avatar SDK Demo",
-    template: `%s - HeyGen Interactive Avatar SDK Demo`,
+    default: "GBM-IA Interactive Avatar",
+    template: `%s - GBM-IA Interactive Avatar`,
   },
+  description: "Plataforma de interacción con avatares inteligentes impulsados por IA de GBM.",
   icons: {
-    icon: "/heygen-logo.png",
-  },
+    icon: "/gbm_logo_azul.png",
+  }
 }
-
 export default function RootLayout({
   children,
 }: {
@@ -35,7 +34,7 @@ export default function RootLayout({
           disableTransitionOnChange // evita flash feo al cambiar
         >
           <main className="relative flex flex-col h-screen w-screen bg-background text-foreground">
-            <ThemeToggle />
+            {/* <ThemeToggle /> */}
             {children}
           </main>
         </ThemeProvider>
