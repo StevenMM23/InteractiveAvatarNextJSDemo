@@ -1,5 +1,6 @@
 "use client"
 
+import { useAvatarStore } from "@/store/avatarStore"
 import type StreamingAvatar from "@heygen/streaming-avatar"
 import {
   ConnectionQuality,
@@ -23,6 +24,11 @@ export interface Message {
   id: string
   sender: MessageSender
   content: string
+  imageBase64?: string // 🔹 opcional, solo si el mensaje trae imagen
+}
+
+type BCGMessageEvent = StreamingTalkingMessageEvent & {
+  imageBase64?: string
 }
 
 type StreamingAvatarContextProps = {
@@ -43,17 +49,10 @@ type StreamingAvatarContextProps = {
 
   messages: Message[]
   clearMessages: () => void
-  addUserMessage: (content: string) => void // Agregando función para agregar mensajes del usuario manualmente
-  handleUserTalkingMessage: ({
-    detail,
-  }: {
-    detail: UserTalkingMessageEvent
-  }) => void
-  handleStreamingTalkingMessage: ({
-    detail,
-  }: {
-    detail: StreamingTalkingMessageEvent
-  }) => void
+  addUserMessage: (content: string) => void
+  addAvatarMessage: (content: string, imageBase64?: string) => void
+  handleUserTalkingMessage: ({ detail }: { detail: UserTalkingMessageEvent }) => void
+  handleStreamingTalkingMessage: ({ detail }: { detail: StreamingTalkingMessageEvent }) => void
   handleEndMessage: () => void
 
   isListening: boolean
@@ -70,85 +69,62 @@ type StreamingAvatarContextProps = {
 const StreamingAvatarContext = React.createContext<StreamingAvatarContextProps>({
   avatarRef: { current: null },
   isMuted: true,
-  setIsMuted: () => {},
+  setIsMuted: () => { },
   isVoiceChatLoading: false,
-  setIsVoiceChatLoading: () => {},
+  setIsVoiceChatLoading: () => { },
   sessionState: StreamingAvatarSessionState.INACTIVE,
-  setSessionState: () => {},
+  setSessionState: () => { },
   isVoiceChatActive: false,
-  setIsVoiceChatActive: () => {},
+  setIsVoiceChatActive: () => { },
   stream: null,
-  setStream: () => {},
+  setStream: () => { },
   messages: [],
-  clearMessages: () => {},
-  addUserMessage: () => {}, // Agregando función vacía por defecto
-  handleUserTalkingMessage: () => {},
-  handleStreamingTalkingMessage: () => {},
-  handleEndMessage: () => {},
+  clearMessages: () => { },
+  addUserMessage: () => { },
+  addAvatarMessage: () => { },
+  handleUserTalkingMessage: () => { },
+  handleStreamingTalkingMessage: () => { },
+  handleEndMessage: () => { },
   isListening: false,
-  setIsListening: () => {},
+  setIsListening: () => { },
   isUserTalking: false,
-  setIsUserTalking: () => {},
+  setIsUserTalking: () => { },
   isAvatarTalking: false,
-  setIsAvatarTalking: () => {},
+  setIsAvatarTalking: () => { },
   connectionQuality: ConnectionQuality.UNKNOWN,
-  setConnectionQuality: () => {},
+  setConnectionQuality: () => { },
 })
 
+/* ------------------------- Session State ------------------------- */
 const useStreamingAvatarSessionState = () => {
   const [sessionState, setSessionState] = useState(StreamingAvatarSessionState.INACTIVE)
   const [stream, setStream] = useState<MediaStream | null>(null)
-
-  return {
-    sessionState,
-    setSessionState,
-    stream,
-    setStream,
-  }
+  return { sessionState, setSessionState, stream, setStream }
 }
 
+/* ------------------------- Voice Chat State ------------------------- */
 const useStreamingAvatarVoiceChatState = () => {
   const [isMuted, setIsMuted] = useState(true)
   const [isVoiceChatLoading, setIsVoiceChatLoading] = useState(false)
   const [isVoiceChatActive, setIsVoiceChatActive] = useState(false)
-
-  return {
-    isMuted,
-    setIsMuted,
-    isVoiceChatLoading,
-    setIsVoiceChatLoading,
-    isVoiceChatActive,
-    setIsVoiceChatActive,
-  }
+  return { isMuted, setIsMuted, isVoiceChatLoading, setIsVoiceChatLoading, isVoiceChatActive, setIsVoiceChatActive }
 }
 
+/* ------------------------- Messages State ------------------------- */
 const useStreamingAvatarMessageState = () => {
   const [messages, setMessages] = useState<Message[]>([])
   const currentSenderRef = useRef<MessageSender | null>(null)
 
   const addUserMessage = (content: string) => {
-    // Agregando función para agregar mensajes del usuario manualmente
-    console.log("[v0] ✍️ MANUAL_USER_MESSAGE - Agregando:", content.substring(0, 50))
-
     currentSenderRef.current = MessageSender.CLIENT
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: Date.now().toString(),
-        sender: MessageSender.CLIENT,
-        content: content,
-      },
-    ])
+    setMessages((prev) => [...prev, { id: Date.now().toString(), sender: MessageSender.CLIENT, content }])
   }
 
-  const handleUserTalkingMessage = ({
-    detail,
-  }: {
-    detail: UserTalkingMessageEvent
-  }) => {
-    console.log("[v0] 📝 USER_MESSAGE - Recibido:", detail.message?.substring(0, 50))
+  const addAvatarMessage = (content: string, imageBase64?: string) => {
+    setMessages((prev) => [...prev, { id: Date.now().toString(), sender: MessageSender.AVATAR, content, imageBase64 }])
+  }
 
-    // Filtrar respuestas típicas de BCG que no deben aparecer como mensajes del usuario
+  const handleUserTalkingMessage = ({ detail }: { detail: UserTalkingMessageEvent }) => {
     const bcgResponsePatterns = [
       "¿Cómo te puedo ayudar hoy?",
       "Elige un análisis a la vez",
@@ -157,60 +133,37 @@ const useStreamingAvatarMessageState = () => {
       "Calcular tasa de crecimiento",
       "Obtener un reporte automático",
     ]
-
-    const isBCGResponse = bcgResponsePatterns.some((pattern) => detail.message?.includes(pattern))
-
-    if (isBCGResponse) {
-      console.log("[v0] 🚫 USER_MESSAGE - Bloqueando respuesta de BCG como mensaje de usuario")
-      return
-    }
+    if (bcgResponsePatterns.some((pattern) => detail.message?.includes(pattern))) return
 
     if (currentSenderRef.current === MessageSender.CLIENT) {
       setMessages((prev) => [
         ...prev.slice(0, -1),
-        {
-          ...prev[prev.length - 1],
-          content: [prev[prev.length - 1].content, detail.message].join(""),
-        },
+        { ...prev[prev.length - 1], content: prev[prev.length - 1].content + detail.message },
       ])
     } else {
       currentSenderRef.current = MessageSender.CLIENT
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          sender: MessageSender.CLIENT,
-          content: detail.message,
-        },
-      ])
+      setMessages((prev) => [...prev, { id: Date.now().toString(), sender: MessageSender.CLIENT, content: detail.message }])
     }
   }
 
-  const handleStreamingTalkingMessage = ({
-    detail,
-  }: {
-    detail: StreamingTalkingMessageEvent
-  }) => {
-    console.log("[v0] 🤖 AVATAR_MESSAGE - Recibido:", detail.message?.substring(0, 50))
+  const handleStreamingTalkingMessage = ({ detail }: { detail: StreamingTalkingMessageEvent }) => {
+    const { currentAvatarType } = useAvatarStore.getState()
+    const bcgDetail = detail as BCGMessageEvent
+
+    if (currentAvatarType === "bcg-product" && typeof bcgDetail.imageBase64 === "string") {
+      useAvatarStore.getState().addBCGImage(bcgDetail.imageBase64)
+      addAvatarMessage(bcgDetail.message || "Imagen generada por BCG", bcgDetail.imageBase64)
+      return
+    }
 
     if (currentSenderRef.current === MessageSender.AVATAR) {
       setMessages((prev) => [
         ...prev.slice(0, -1),
-        {
-          ...prev[prev.length - 1],
-          content: [prev[prev.length - 1].content, detail.message].join(""),
-        },
+        { ...prev[prev.length - 1], content: prev[prev.length - 1].content + detail.message },
       ])
     } else {
       currentSenderRef.current = MessageSender.AVATAR
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          sender: MessageSender.AVATAR,
-          content: detail.message,
-        },
-      ])
+      setMessages((prev) => [...prev, { id: Date.now().toString(), sender: MessageSender.AVATAR, content: detail.message }])
     }
   }
 
@@ -218,50 +171,28 @@ const useStreamingAvatarMessageState = () => {
     currentSenderRef.current = null
   }
 
-  return {
-    messages,
-    clearMessages: () => {
-      setMessages([])
-      currentSenderRef.current = null
-    },
-    addUserMessage, // Exportando la nueva función
-    handleUserTalkingMessage,
-    handleStreamingTalkingMessage,
-    handleEndMessage,
-  }
+  return { messages, clearMessages: () => setMessages([]), addUserMessage, addAvatarMessage, handleUserTalkingMessage, handleStreamingTalkingMessage, handleEndMessage }
 }
 
+/* ------------------------- Other States ------------------------- */
 const useStreamingAvatarListeningState = () => {
   const [isListening, setIsListening] = useState(false)
-
   return { isListening, setIsListening }
 }
 
 const useStreamingAvatarTalkingState = () => {
   const [isUserTalking, setIsUserTalking] = useState(false)
   const [isAvatarTalking, setIsAvatarTalking] = useState(false)
-
-  return {
-    isUserTalking,
-    setIsUserTalking,
-    isAvatarTalking,
-    setIsAvatarTalking,
-  }
+  return { isUserTalking, setIsUserTalking, isAvatarTalking, setIsAvatarTalking }
 }
 
 const useStreamingAvatarConnectionQualityState = () => {
   const [connectionQuality, setConnectionQuality] = useState(ConnectionQuality.UNKNOWN)
-
   return { connectionQuality, setConnectionQuality }
 }
 
-export const StreamingAvatarProvider = ({
-  children,
-  basePath,
-}: {
-  children: React.ReactNode
-  basePath?: string
-}) => {
+/* ------------------------- Provider ------------------------- */
+export const StreamingAvatarProvider = ({ children, basePath }: { children: React.ReactNode; basePath?: string }) => {
   const avatarRef = React.useRef<StreamingAvatar>(null)
   const voiceChatState = useStreamingAvatarVoiceChatState()
   const sessionState = useStreamingAvatarSessionState()
@@ -288,6 +219,4 @@ export const StreamingAvatarProvider = ({
   )
 }
 
-export const useStreamingAvatarContext = () => {
-  return React.useContext(StreamingAvatarContext)
-}
+export const useStreamingAvatarContext = () => React.useContext(StreamingAvatarContext)

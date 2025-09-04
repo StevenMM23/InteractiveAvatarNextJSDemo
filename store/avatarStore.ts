@@ -32,7 +32,8 @@ export interface AvatarStore {
   // 🔹 Manejo de imágenes en memoria (no persistentes)
   generatedImages: string[]
   isImageModalOpen: boolean
-
+  selectedImage: string | null
+  setSelectedImage: (img: string | null) => void
   // 🔹 Actions
   setGestorCobranzaSession: (session: AvatarSession) => void
   setBCGProductSession: (session: BCGSession) => void
@@ -80,7 +81,8 @@ export const useAvatarStore = create<AvatarStore>((set, get) => ({
   setVolcanoSession: (session) => set({ volcano: session }),
   setOnboardingSession: (session) => set({ onboarding: session }),
   setMicrosoftSession: (session) => set({ microsoft: session }),
-
+  selectedImage: null,
+  setSelectedImage: (img) => set({ selectedImage: img }),
   // Avatar actual
   setCurrentAvatarType: (avatarType) => set({ currentAvatarType: avatarType }),
 
@@ -88,10 +90,11 @@ export const useAvatarStore = create<AvatarStore>((set, get) => ({
   addBCGImage: (imageBase64) =>
     set((state) => ({
       generatedImages: [...state.generatedImages, imageBase64],
-      isImageModalOpen: true, // abrir modal al recibir imagen
+      selectedImage: imageBase64,   // 👈 seleccionar imagen al abrir
+      isImageModalOpen: true,
     })),
+  clearImages: () => set({ generatedImages: [], isImageModalOpen: false, selectedImage: null }),
 
-  clearImages: () => set({ generatedImages: [], isImageModalOpen: false }),
   setImageModalOpen: (open) => set({ isImageModalOpen: open }),
 
   // Limpieza de sesiones
