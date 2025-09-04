@@ -23,7 +23,9 @@ export interface AvatarStore {
   volcano: KnowledgeSession | null
   onboarding: KnowledgeSession | null
   microsoft: KnowledgeSession | null
-
+  // 🔹 Estado global de vista inmersiva
+  isImmersive: boolean
+  setIsImmersive: (value: boolean) => void
   // 🔹 Avatar actual en uso
   currentAvatarType: string | null
 
@@ -64,7 +66,8 @@ export const useAvatarStore = create<AvatarStore>((set, get) => ({
   volcano: null,
   onboarding: null,
   microsoft: null,
-
+  isImmersive: false,
+  setIsImmersive: (value) => set({ isImmersive: value }),
   currentAvatarType: null,
 
   // 🚀 Estado de imágenes (no persistente)

@@ -42,15 +42,17 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     setIsVoiceChatActive,
     isVoiceChatLoading,
     setIsVoiceChatLoading,
+    addUserMessage
   } = useStreamingAvatarContext()
 
   const { getSession, currentAvatarType } = useAvatarStore()
   const isActive = avatarType === currentAvatarType
 
-  // Siempre inicializamos hooks
+  // refs
   const speechRecognitionRef = useRef<SpeechRecognition | null>(null)
   const isAvatarSpeakingRef = useRef(false)
 
+  // --- Validación transcript ---
   const isValidTranscript = (t: string) => {
     const clean = t.replace(/[^\w\sáéíóúüñÁÉÍÓÚÜÑ]/g, "").trim()
     const validShort = ["si", "sí", "no", "ok"]
@@ -81,7 +83,7 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     }
   }, [isMuted, isVoiceChatActive, isActive])
 
-  // 🎤 Web Speech / SDK según avatar
+  // 🎤 Inicialización de Web Speech (solo API-driven)
   useEffect(() => {
     if (!isActive) {
       console.log(`⏸️ [useVoiceChat] ${avatarType} ignorado. Activo: ${currentAvatarType}`)
@@ -90,7 +92,7 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
 
     const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
     if (isKnowledge) {
-      console.log("🟦 [useVoiceChat] ES SDK, no se inicializa Web Speech:", avatarType)
+      console.log("🟦 [useVoiceChat] SDK maneja micro:", avatarType)
       return
     }
 
@@ -98,17 +100,19 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) return
 
-    console.log("🟩 [useVoiceChat] ES WEB SPEECH, inicializando para:", avatarType)
+    console.log("🟩 [useVoiceChat] Web Speech inicializado:", avatarType)
     speechRecognitionRef.current = new SR()
     speechRecognitionRef.current.continuous = true
     speechRecognitionRef.current.interimResults = true
     speechRecognitionRef.current.lang = "es-ES"
 
+    // --- Evento onresult ---
     speechRecognitionRef.current.onresult = async (event) => {
       if (!isActive) return
       const last = event.results[event.results.length - 1]
       const transcript = last[0].transcript.trim()
 
+      // interrupción natural
       if (!last.isFinal && transcript.length > 0) {
         avatarRef.current?.interrupt?.()
         isAvatarSpeakingRef.current = false
@@ -120,6 +124,8 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
       if (!avatarRef.current) return
       pauseSpeechRecognition()
 
+      addUserMessage(transcript)
+
       try {
         let textToSpeak = ""
 
@@ -127,7 +133,10 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           const session = getSession("gestor-cobranza")
           if (!session?.sessionId) return
           const body = { session_id: session.sessionId, user_input: transcript }
-          const res = await axios.post("/api/gestor-cobranza/chat", body, { headers: { "Content-Type": "application/json" }, timeout: 30000 })
+          const res = await axios.post("/api/gestor-cobranza/chat", body, {
+            headers: { "Content-Type": "application/json" },
+            timeout: 30000,
+          })
           textToSpeak = res.data?.agent_response || ""
         } else if (avatarType === "bcg-product") {
           const session = getSession("bcg-product")
@@ -135,23 +144,16 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           const body = { user_input: transcript, conversation_id: session.conversationId }
           const res = await axios.post("/api/bcg/chat", body, {
             headers: { "Content-Type": "application/json" },
-
+            timeout: 30000,
           })
-
           textToSpeak = res.data?.response || ""
 
-          // 🚀 Nuevo: si viene imagen, la guardamos en el store y abrimos modal
+          // 🚀 Nuevo: imagen
           if (res.data?.image_base64) {
             const { addBCGImage, setImageModalOpen } = useAvatarStore.getState()
             addBCGImage(res.data.image_base64)
             setImageModalOpen(true)
           }
-        }
-
-        if (["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)) {
-          await avatarRef.current?.speak({ text: transcript, taskType: TaskType.TALK })
-          console.log("🗣️ [useVoiceChat] TALK ejecutado con KB:", avatarType)
-          return
         }
 
         if (textToSpeak) {
@@ -164,12 +166,14 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
       setTimeout(resumeSpeechRecognition, 2000)
     }
 
+    // reinicio en error
     speechRecognitionRef.current.onerror = () => {
       if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
         setTimeout(() => speechRecognitionRef.current?.start(), 1500)
       }
     }
 
+    // reinicio en cierre natural
     speechRecognitionRef.current.onend = () => {
       if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
         setTimeout(() => speechRecognitionRef.current?.start(), 1000)
@@ -177,7 +181,9 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     }
 
     return () => {
-      try { speechRecognitionRef.current?.stop() } catch { }
+      try {
+        speechRecognitionRef.current?.stop()
+      } catch { }
       speechRecognitionRef.current = null
     }
   }, [avatarType, avatarRef, getSession, isMuted, isVoiceChatActive, pauseSpeechRecognition, resumeSpeechRecognition, isActive, currentAvatarType])
@@ -191,10 +197,8 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
       const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
 
       if (isKnowledge) {
-        console.log("🟦 [useVoiceChat] Iniciando voice chat con SDK:", avatarType)
         await avatarRef.current.startVoiceChat({ isInputAudioMuted })
       } else {
-        console.log("🟩 [useVoiceChat] Iniciando voice chat con Web Speech:", avatarType)
         if (speechRecognitionRef.current && !isInputAudioMuted) {
           speechRecognitionRef.current.start()
         }
@@ -210,7 +214,9 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
 
   const stopVoiceChat = useCallback(() => {
     if (!isActive || !avatarRef.current) return
-    try { speechRecognitionRef.current?.stop() } catch { }
+    try {
+      speechRecognitionRef.current?.stop()
+    } catch { }
     avatarRef.current.closeVoiceChat?.()
     setIsVoiceChatActive(false)
     setIsMuted(true)
@@ -223,7 +229,9 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     if (isKnowledge) {
       avatarRef.current.muteInputAudio?.()
     } else {
-      try { speechRecognitionRef.current?.stop() } catch { }
+      try {
+        speechRecognitionRef.current?.stop()
+      } catch { }
       const mediaStream = (avatarRef.current as any).localStream
       mediaStream?.getAudioTracks().forEach((t: MediaStreamTrack) => (t.enabled = false))
     }
@@ -237,7 +245,9 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     if (isKnowledge) {
       avatarRef.current.unmuteInputAudio?.()
     } else {
-      try { speechRecognitionRef.current?.start() } catch { }
+      try {
+        speechRecognitionRef.current?.start()
+      } catch { }
       const mediaStream = (avatarRef.current as any).localStream
       mediaStream?.getAudioTracks().forEach((t: MediaStreamTrack) => (t.enabled = true))
     }

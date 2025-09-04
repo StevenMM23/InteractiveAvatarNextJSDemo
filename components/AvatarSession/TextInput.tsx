@@ -11,24 +11,19 @@ import { Input } from "../Input"
 import { useConversationState } from "../logic/useConversationState"
 import { useAvatarStore } from "@/store/avatarStore"
 
-
 interface TextInputProps {
-  /** "gestor-cobranza" | "bcg-product" | "volcano" */
   avatarType: string
 }
 
 export const TextInput: React.FC<TextInputProps> = ({ avatarType }) => {
-  // 🟣 Store: sincronizamos avatarType global
   const { currentAvatarType, setCurrentAvatarType } = useAvatarStore()
 
-  // Si cambia el prop, actualizamos el store
   useEffect(() => {
     if (avatarType && avatarType !== currentAvatarType) {
       setCurrentAvatarType(avatarType as any)
     }
   }, [avatarType, currentAvatarType, setCurrentAvatarType])
 
-  // 👇 Router: Volcano => TALK (SDK), Gestor/BCG => REPEAT (API)
   const { sendMessageToAPI } = useTextChat(avatarType as any)
   const { startListening, stopListening } = useConversationState()
   const [message, setMessage] = useState("")
@@ -36,15 +31,10 @@ export const TextInput: React.FC<TextInputProps> = ({ avatarType }) => {
   const handleSend = useCallback(async () => {
     const trimmed = message.trim()
     if (!trimmed) return
-
-    // 🔹 UX: limpiar input INMEDIATAMENTE para sensación de rapidez
     setMessage("")
-
-    // 🔹 El hook agrega el mensaje al historial y enruta TALK/REPEAT según avatarType
     await sendMessageToAPI(trimmed)
   }, [message, sendMessageToAPI])
 
-  // Enter para enviar
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Enter") {
@@ -56,7 +46,6 @@ export const TextInput: React.FC<TextInputProps> = ({ avatarType }) => {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [handleSend])
 
-  // Mantener indicadores de “escuchando” si quieres animaciones de UI
   const prev = usePrevious(message)
   useEffect(() => {
     if (!prev && message) startListening()
@@ -64,15 +53,24 @@ export const TextInput: React.FC<TextInputProps> = ({ avatarType }) => {
   }, [message, prev, startListening, stopListening])
 
   return (
-    <div className="flex flex-row gap-2 items-end w-full">
+    <div className="flex flex-row items-center gap-3 w-full">
       <Input
-        className="min-w-[500px]"
-        placeholder={`Escribe tu mensaje para ${avatarType}…`}
+        className="flex-1 px-4 py-4 text-lg rounded-xl border border-border 
+                   bg-background text-foreground placeholder:text-muted-foreground 
+                   focus:ring-2 focus:ring-primary focus:outline-none"
+        placeholder={`Escribe tu mensaje`}
         value={message}
         onChange={setMessage}
       />
-      <Button className="!p-2" onClick={handleSend} disabled={!message.trim()}>
-        <SendIcon size={20} />
+      <Button
+        onClick={handleSend}
+        disabled={!message.trim()}
+        className="w-14 h-14 rounded-full flex items-center justify-center
+                   bg-primary text-primary-foreground 
+                   hover:bg-primary/90 hover:ring-4 hover:ring-primary/40
+                   transition-all duration-300"
+      >
+        <SendIcon size={28} />
       </Button>
     </div>
   )

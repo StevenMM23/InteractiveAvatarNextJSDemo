@@ -2,13 +2,13 @@ import type React from "react"
 import "@/styles/globals.css"
 import type { Metadata } from "next"
 import { Fira_Mono as FontMono, Mona_Sans as FontSans } from "next/font/google"
-
+import { ThemeProvider } from "next-themes"
+import { ThemeToggle } from "@/components/ThemeToggle"
 
 const fontSans = FontSans({
   subsets: ["latin"],
   variable: "--font-sans",
 })
-
 
 export const metadata: Metadata = {
   title: {
@@ -26,13 +26,19 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html suppressHydrationWarning className={`${fontSans.variable} font-sans`} lang="en">
-      <head />
-      <body className="min-h-screen bg-black text-white" suppressHydrationWarning>
-        <main className="relative flex flex-col gap-6 h-screen w-screen">
-
-          {children}
-        </main>
+    <html suppressHydrationWarning lang="en" className={`${fontSans.variable} font-sans`}>
+      <body suppressHydrationWarning>
+        <ThemeProvider
+          attribute="class"         // añade/remueve "dark" en <html>
+          defaultTheme="dark"     // light/dark según sistema
+          enableSystem              // se adapta al sistema operativo
+          disableTransitionOnChange // evita flash feo al cambiar
+        >
+          <main className="relative flex flex-col h-screen w-screen bg-background text-foreground">
+            <ThemeToggle />
+            {children}
+          </main>
+        </ThemeProvider>
       </body>
     </html>
   )
