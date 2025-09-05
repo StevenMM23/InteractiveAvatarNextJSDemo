@@ -24,7 +24,6 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
         setImageModalOpen,
         selectedImage,
         setSelectedImage,
-        addBCGImage,
     } = useAvatarStore()
 
     const isBCG = currentAvatarType === "bcg-product"
@@ -41,7 +40,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
       transform transition-transform duration-300 ease-in-out 
       ${isOpen ? "translate-x-0" : "translate-x-full"}`}
         >
-            {/* Header fijo (64px) */}
+            {/* Header fijo */}
             <div className="flex items-center justify-between h-16 px-4 border-b border-border relative">
                 <h3 className="font-semibold text-2xl text-foreground">
                     {isBCG ? "BCG Assistant" : "Chat"}
@@ -51,17 +50,15 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
                 </Button>
             </div>
 
-            {/* ⚠️ Contenedor limpio: ocupa todo lo demás del alto */}
+            {/* Contenido */}
             <div className="flex flex-col h-[calc(100%-64px)] overflow-hidden">
                 {isBCG ? (
                     <Tabs defaultValue="chat" className="flex-1 flex flex-col overflow-hidden">
-                        {/* Tabs no crecen, no empujan */}
                         <TabsList className="h-10 shrink-0 w-full border-b border-border rounded-none">
                             <TabsTrigger value="chat" className="text-base font-semibold">Chat</TabsTrigger>
                             <TabsTrigger value="images" className="text-base font-semibold">Imágenes</TabsTrigger>
                         </TabsList>
 
-                        {/* CHAT: sin márgenes extra, ocupa todo */}
                         <TabsContent
                             value="chat"
                             className="flex-1 overflow-hidden p-0 data-[state=inactive]:hidden"
@@ -80,13 +77,18 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
                                                     }`}
                                             >
                                                 <p>{msg.content}</p>
+
+                                                {/* Si tu pipeline mete imageBase64 en el mensaje del bot, muéstrala y abre modal */}
                                                 {msg.imageBase64 && (
                                                     <div className="mt-3">
                                                         <img
                                                             src={`data:image/png;base64,${msg.imageBase64}`}
                                                             alt="Imagen generada"
                                                             className="rounded-lg shadow-md max-h-[250px] cursor-pointer transition-transform hover:scale-105"
-                                                            onClick={() => addBCGImage(msg.imageBase64!)}
+                                                            onClick={() => {
+                                                                setSelectedImage(msg.imageBase64!)
+                                                                setImageModalOpen(true)
+                                                            }}
                                                         />
                                                     </div>
                                                 )}
@@ -99,7 +101,6 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
                             </ScrollArea>
                         </TabsContent>
 
-                        {/* IMÁGENES: lista vertical scrollable */}
                         <TabsContent
                             value="images"
                             className="flex-1 overflow-hidden p-0 data-[state=inactive]:hidden"
@@ -113,11 +114,17 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
                                                 className="cursor-pointer overflow-hidden rounded-lg border border-border shadow hover:shadow-lg transition"
                                                 onClick={() => { setSelectedImage(img); setImageModalOpen(true); }}
                                             >
-                                                <img src={`data:image/png;base64,${img}`} alt={`Generated ${i}`} className="w-full h-auto object-contain" />
+                                                <img
+                                                    src={`data:image/png;base64,${img}`}
+                                                    alt={`Generated ${i}`}
+                                                    className="w-full h-auto object-contain"
+                                                />
                                             </div>
                                         ))
                                     ) : (
-                                        <p className="text-lg text-muted-foreground">No hay imágenes generadas aún.</p>
+                                        <p className="text-lg text-muted-foreground">
+                                            No hay imágenes generadas aún.
+                                        </p>
                                     )}
                                     <div ref={endRef} />
                                 </div>
@@ -150,14 +157,22 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
                     </ScrollArea>
                 )}
 
-                {/* Input fijo abajo (no empuja el scroll) */}
+                {/* Input fijo abajo */}
                 <div className="absolute bottom-0 left-0 right-0 border-t border-border bg-card p-4">
-                    {currentAvatarType ? <TextInput avatarType={currentAvatarType} /> : <p className="text-lg text-muted-foreground">Selecciona un avatar para empezar a chatear</p>}
+                    {currentAvatarType ? (
+                        <TextInput avatarType={currentAvatarType} />
+                    ) : (
+                        <p className="text-lg text-muted-foreground">
+                            Selecciona un avatar para empezar a chatear
+                        </p>
+                    )}
                 </div>
             </div>
 
-            {/* Modal */}
-            {isImageModalOpen && selectedImage && <ImageModal imageBase64={selectedImage} title="Imagen generada" />}
+            {/* Modal de imagen */}
+            {isImageModalOpen && selectedImage && (
+                <ImageModal imageBase64={selectedImage} title="Imagen generada" />
+            )}
         </div>
     )
 }
