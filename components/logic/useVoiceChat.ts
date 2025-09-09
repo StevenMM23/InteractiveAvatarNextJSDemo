@@ -1,58 +1,52 @@
 "use client"
 
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useRef, useState } from "react"
 import { TaskType } from "@heygen/streaming-avatar"
 import axios from "axios"
-
 import { useStreamingAvatarContext } from "./context"
 import { useAvatarStore } from "../../store/avatarStore"
 
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList
-  resultIndex: number
-}
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean
-  interimResults: boolean
-  lang: string
-  start(): void
-  stop(): void
-  abort(): void
-  onresult: ((event: SpeechRecognitionEvent) => void) | null
-  onstart: ((event: Event) => void) | null
-  onend: ((event: Event) => void) | null
-  onerror: ((event: Event) => void) | null
-}
-declare global {
-  interface Window {
-    SpeechRecognition: new () => SpeechRecognition
-    webkitSpeechRecognition: new () => SpeechRecognition
-  }
-}
+const isBCGSession = (s: any): s is import("../../store/avatarStore").BCGSession =>
+  s && "conversationId" in s && "selectedProduct" in s
 
-const isBCGSession = (session: any): session is import("../../store/avatarStore").BCGSession =>
-  session && "conversationId" in session && "selectedProduct" in session
+/** Pick a recorder mimetype supported by the browser and its matching STT encoding hint */
+function pickMimeAndEncoding() {
+  const candidates = [
+    { mime: "audio/ogg;codecs=opus", encoding: "OGG_OPUS" as const },
+    { mime: "audio/webm;codecs=opus", encoding: "WEBM_OPUS" as const },
+  ]
+  for (const c of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(c.mime)) {
+      return c
+    }
+  }
+  throw new Error("No MediaRecorder support for OGG/WebM Opus in this browser")
+}
 
 export const useVoiceChat = (avatarType = "gestor-cobranza") => {
   const {
     avatarRef,
-    isMuted,
-    setIsMuted,
-    isVoiceChatActive,
-    setIsVoiceChatActive,
-    isVoiceChatLoading,
-    setIsVoiceChatLoading,
-    addUserMessage
+    isMuted, setIsMuted,
+    isVoiceChatActive, setIsVoiceChatActive,
+    isVoiceChatLoading, setIsVoiceChatLoading,
+    addUserMessage,
   } = useStreamingAvatarContext()
 
   const { getSession, currentAvatarType } = useAvatarStore()
   const isActive = avatarType === currentAvatarType
 
-  // refs
-  const speechRecognitionRef = useRef<SpeechRecognition | null>(null)
-  const isAvatarSpeakingRef = useRef(false)
+  // --- WS / media refs
+  const wsRef = useRef<WebSocket | null>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
 
-  // --- Validación transcript ---
+  // persist chosen mime/encoding for re-handshake on unmute
+  const desiredMimeRef = useRef<string | null>(null)
+  const desiredEncodingRef = useRef<"OGG_OPUS" | "WEBM_OPUS" | null>(null)
+
+  const [isRecording, setIsRecording] = useState(false)
+
+  // ---- transcript validation
   const isValidTranscript = (t: string) => {
     const clean = t.replace(/[^\w\sáéíóúüñÁÉÍÓÚÜÑ]/g, "").trim()
     const validShort = ["si", "sí", "no", "ok"]
@@ -63,66 +57,83 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     return true
   }
 
-  const pauseSpeechRecognition = useCallback(() => {
-    if (!isActive) return
+  // ---- helpers
+  const stopMedia = useCallback(() => {
     try {
-      speechRecognitionRef.current?.stop()
-      isAvatarSpeakingRef.current = true
+      recorderRef.current?.stop()
     } catch { }
-  }, [isActive])
+    recorderRef.current = null
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => {
+        try { t.stop() } catch { }
+      })
+      mediaStreamRef.current = null
+    }
+    setIsRecording(false)
+  }, [])
 
-  const resumeSpeechRecognition = useCallback(() => {
-    if (!isActive) return
-    if (speechRecognitionRef.current && !isMuted && isVoiceChatActive) {
-      setTimeout(() => {
+  const beginRecording = useCallback(async () => {
+    const mime = desiredMimeRef.current
+    if (!mime) throw new Error("No recorder mimetype selected")
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error("WebSocket not open")
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    mediaStreamRef.current = stream
+    const rec = new MediaRecorder(stream, { mimeType: mime })
+    recorderRef.current = rec
+
+    rec.ondataavailable = async (e) => {
+      if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
         try {
-          speechRecognitionRef.current?.start()
-          isAvatarSpeakingRef.current = false
-        } catch { }
-      }, 1000)
+          const buf = await e.data.arrayBuffer()
+          ws.send(buf)
+        } catch (err) {
+          console.error("[GoogleSTT] ❌ Error sending chunk:", err)
+        }
+      }
     }
-  }, [isMuted, isVoiceChatActive, isActive])
+    rec.onstart = () => { setIsRecording(true); console.log("[GoogleSTT] 🎤 Recording started") }
+    rec.onstop = () => { setIsRecording(false); console.log("[GoogleSTT] ⏹️ Recording stopped") }
+    rec.onerror = (ev) => console.error("[GoogleSTT] 🎙️ MediaRecorder error:", (ev as any).error || ev)
 
-  // 🎤 Inicialización de Web Speech (solo API-driven)
-  useEffect(() => {
-    if (!isActive) {
-      console.log(`⏸️ [useVoiceChat] ${avatarType} ignorado. Activo: ${currentAvatarType}`)
+    rec.start(250) // send ~every 250ms
+  }, [])
+
+  // ---- WS message handler
+  const handleWSMessage = useCallback(async (event: MessageEvent) => {
+    let data: any
+    try { data = JSON.parse(event.data) } catch { }
+    if (!data) return
+
+    if (data.type === "ready") {
+      console.log("[GoogleSTT] ✅ Backend ready → start recording")
+      try {
+        await beginRecording()
+      } catch (err) {
+        console.error("[GoogleSTT] ❌ beginRecording failed:", err)
+      }
       return
     }
 
-    const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
-    if (isKnowledge) {
-      console.log("🟦 [useVoiceChat] SDK maneja micro:", avatarType)
+    if (data.error) {
+      console.error("[GoogleSTT] ❌ Backend error:", data.error)
       return
     }
 
-    if (typeof window === "undefined") return
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) return
-
-    console.log("🟩 [useVoiceChat] Web Speech inicializado:", avatarType)
-    speechRecognitionRef.current = new SR()
-    speechRecognitionRef.current.continuous = true
-    speechRecognitionRef.current.interimResults = true
-    speechRecognitionRef.current.lang = "es-ES"
-
-    // --- Evento onresult ---
-    speechRecognitionRef.current.onresult = async (event) => {
-      if (!isActive) return
-      const last = event.results[event.results.length - 1]
-      const transcript = last[0].transcript.trim()
-
-      // interrupción natural
-      if (!last.isFinal && transcript.length > 0) {
+    if (data.transcript) {
+      if (!data.isFinal) {
+        console.log("[GoogleSTT] ✍️ Partial:", data.transcript)
+        // Interrupt avatar if it's speaking
         avatarRef.current?.interrupt?.()
-        isAvatarSpeakingRef.current = false
         return
       }
 
-      if (!last.isFinal) return
-      if (!isValidTranscript(transcript)) return
-      if (!avatarRef.current) return
-      pauseSpeechRecognition()
+      const transcript = String(data.transcript || "").trim()
+      console.log("[GoogleSTT] ✅ Final:", transcript)
+      if (!isValidTranscript(transcript)) {
+        console.warn("[GoogleSTT] ⚠️ Invalid/empty transcript")
+        return
+      }
 
       addUserMessage(transcript)
 
@@ -133,25 +144,21 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           const session = getSession("gestor-cobranza")
           if (!session?.sessionId) return
           const body = { session_id: session.sessionId, user_input: transcript }
-          const res = await axios.post("/api/gestor-cobranza/chat", body, {
-            headers: { "Content-Type": "application/json" },
-            timeout: 30000,
+          const apiRes = await axios.post("/api/gestor-cobranza/chat", body, {
+            headers: { "Content-Type": "application/json" }, timeout: 30000,
           })
-          textToSpeak = res.data?.agent_response || ""
+          textToSpeak = apiRes.data?.agent_response || ""
         } else if (avatarType === "bcg-product") {
           const session = getSession("bcg-product")
           if (!session || !isBCGSession(session) || !session.conversationId) return
           const body = { user_input: transcript, conversation_id: session.conversationId }
-          const res = await axios.post("/api/bcg/chat", body, {
-            headers: { "Content-Type": "application/json" },
-            timeout: 30000,
+          const apiRes = await axios.post("/api/bcg/chat", body, {
+            headers: { "Content-Type": "application/json" }, timeout: 30000,
           })
-          textToSpeak = res.data?.response || ""
-
-          // 🚀 Nuevo: imagen
-          if (res.data?.image_base64) {
+          textToSpeak = apiRes.data?.response || ""
+          if (apiRes.data?.image_base64) {
             const { addBCGImage, setImageModalOpen } = useAvatarStore.getState()
-            addBCGImage(res.data.image_base64)
+            addBCGImage(apiRes.data.image_base64)
             setImageModalOpen(true)
           }
         }
@@ -160,113 +167,153 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           await avatarRef.current?.speak({ text: textToSpeak, taskType: TaskType.REPEAT })
         }
       } catch (err) {
-        console.error("[useVoiceChat] error:", err)
-      }
-
-      setTimeout(resumeSpeechRecognition, 2000)
-    }
-
-    // reinicio en error
-    speechRecognitionRef.current.onerror = () => {
-      if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
-        setTimeout(() => speechRecognitionRef.current?.start(), 1500)
+        console.error("[GoogleSTT] ❌ Error calling business API:", err)
       }
     }
+  }, [addUserMessage, avatarRef, avatarType, getSession])
 
-    // reinicio en cierre natural
-    speechRecognitionRef.current.onend = () => {
-      if (!isMuted && isVoiceChatActive && !isAvatarSpeakingRef.current) {
-        setTimeout(() => speechRecognitionRef.current?.start(), 1000)
-      }
+  // ---- start WS streaming
+  const startStreaming = useCallback(async () => {
+    console.log(`[GoogleSTT] 🎤 Starting streaming (${avatarType})...`)
+
+    const { mime, encoding } = pickMimeAndEncoding()
+    desiredMimeRef.current = mime
+    desiredEncodingRef.current = encoding
+    console.log(`[GoogleSTT] Chosen format → mime=${mime} encoding=${encoding}`)
+
+    const url =
+      process.env.NEXT_PUBLIC_STT_WS_URL ??
+      (location.protocol === "https:" ? `wss://${location.hostname}:4000/ws` : `ws://${location.hostname}:4000/ws`)
+
+    const ws = new WebSocket(url)
+    ws.binaryType = "arraybuffer"
+    wsRef.current = ws
+
+    ws.onopen = () => {
+      console.log("[GoogleSTT] 🔗 WS open → handshake")
+      ws.send(JSON.stringify({
+        type: "start",
+        encoding,               // "OGG_OPUS" | "WEBM_OPUS" (server converts to LINEAR16)
+        languageCode: "es-ES",
+        interimResults: true,
+        singleUtterance: false,
+        model: "latest_long",
+        sampleRateHertz: 16000, // informational; backend outputs 16k mono
+      }))
     }
 
-    return () => {
-      try {
-        speechRecognitionRef.current?.stop()
-      } catch { }
-      speechRecognitionRef.current = null
-    }
-  }, [avatarType, avatarRef, getSession, isMuted, isVoiceChatActive, pauseSpeechRecognition, resumeSpeechRecognition, isActive, currentAvatarType])
+    ws.onmessage = handleWSMessage
 
-  // 🚀 start/stop/mute/unmute
-  const startVoiceChat = useCallback(async (isInputAudioMuted?: boolean) => {
+    ws.onclose = () => {
+      console.log("[GoogleSTT] 🔌 WS closed")
+      stopMedia()
+    }
+    ws.onerror = (err) => console.error("[GoogleSTT] ⚠️ WS error:", err)
+  }, [avatarType, handleWSMessage, stopMedia])
+
+  // ---- stop WS streaming
+  const stopStreaming = useCallback(() => {
+    try { stopMedia() } catch { }
+    try { wsRef.current?.send(JSON.stringify({ type: "stop" })) } catch { }
+    try { wsRef.current?.close() } catch { }
+    wsRef.current = null
+    console.log("[GoogleSTT] ⏹️ Streaming stopped")
+  }, [stopMedia])
+
+  // ---- public API expected by your UI
+
+  const startVoiceChat = useCallback(async () => {
     if (!isActive || !avatarRef.current) return
     setIsVoiceChatLoading(true)
-
     try {
       const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
-
       if (isKnowledge) {
-        await avatarRef.current.startVoiceChat({ isInputAudioMuted })
+        console.log("🟦 [useVoiceChat] SDK handles mic:", avatarType)
+        await avatarRef.current.startVoiceChat({})
       } else {
-        if (speechRecognitionRef.current && !isInputAudioMuted) {
-          speechRecognitionRef.current.start()
-        }
+        await startStreaming()
       }
       setIsVoiceChatActive(true)
-      setIsMuted(!!isInputAudioMuted)
+      setIsMuted(false)
     } catch (err) {
-      console.error("[useVoiceChat] startVoiceChat error:", err)
+      console.error("[useVoiceChat] ❌ startVoiceChat error:", err)
     } finally {
       setIsVoiceChatLoading(false)
     }
-  }, [isActive, avatarType, avatarRef, setIsVoiceChatLoading, setIsVoiceChatActive, setIsMuted])
+  }, [isActive, avatarRef, avatarType, setIsVoiceChatActive, setIsMuted, setIsVoiceChatLoading, startStreaming])
 
   const stopVoiceChat = useCallback(() => {
     if (!isActive || !avatarRef.current) return
-    try {
-      speechRecognitionRef.current?.stop()
-    } catch { }
+    stopStreaming()
     avatarRef.current.closeVoiceChat?.()
     setIsVoiceChatActive(false)
     setIsMuted(true)
-  }, [isActive, avatarRef, setIsMuted, setIsVoiceChatActive])
+  }, [isActive, avatarRef, stopStreaming, setIsMuted, setIsVoiceChatActive])
 
   const muteInputAudio = useCallback(() => {
-    if (!isActive || !avatarRef.current) return
+    // Keep WS open; stop STT pipelines so Google won't timeout
     const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
-
     if (isKnowledge) {
-      avatarRef.current.muteInputAudio?.()
-    } else {
-      try {
-        speechRecognitionRef.current?.stop()
-      } catch { }
-      const mediaStream = (avatarRef.current as any).localStream
-      mediaStream?.getAudioTracks().forEach((t: MediaStreamTrack) => (t.enabled = false))
+      avatarRef.current?.muteInputAudio?.()
+      setIsMuted(true)
+      return
     }
+
+    console.log("[GoogleSTT] 🔇 Muting mic (stop STT pipelines)")
+    try { stopMedia() } catch { }
+    try { wsRef.current?.send(JSON.stringify({ type: "stop" })) } catch { }
     setIsMuted(true)
-  }, [isActive, avatarType, avatarRef, setIsMuted])
+  }, [avatarType, stopMedia, avatarRef])
 
-  const unmuteInputAudio = useCallback(() => {
-    if (!isActive || !avatarRef.current) return
+  const unmuteInputAudio = useCallback(async () => {
     const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
-
     if (isKnowledge) {
-      avatarRef.current.unmuteInputAudio?.()
-    } else {
-      try {
-        speechRecognitionRef.current?.start()
-      } catch { }
-      const mediaStream = (avatarRef.current as any).localStream
-      mediaStream?.getAudioTracks().forEach((t: MediaStreamTrack) => (t.enabled = true))
+      avatarRef.current?.unmuteInputAudio?.()
+      setIsMuted(false)
+      return
     }
-    setIsMuted(false)
-  }, [isActive, avatarType, avatarRef, setIsMuted])
 
-  const setSpeechLanguage = useCallback((language: string) => {
-    if (!isActive) return
-    if (speechRecognitionRef.current) speechRecognitionRef.current.lang = language
-  }, [isActive])
+    console.log("[GoogleSTT] 🔊 Unmuting mic (re-handshake)")
+    const ws = wsRef.current
+    const encoding = desiredEncodingRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      // re-open full streaming if WS died
+      await startStreaming()
+      setIsMuted(false)
+      return
+    }
+    if (!encoding) {
+      const picked = pickMimeAndEncoding()
+      desiredMimeRef.current = picked.mime
+      desiredEncodingRef.current = picked.encoding
+    }
+
+    // Re-handshake; backend will reply {type:"ready"} and then beginRecording() runs
+    ws.send(JSON.stringify({
+      type: "start",
+      encoding: desiredEncodingRef.current,
+      languageCode: "es-ES",
+      interimResults: true,
+      singleUtterance: false,
+      model: "latest_long",
+      sampleRateHertz: 16000,
+    }))
+    setIsMuted(false)
+  }, [avatarType, startStreaming, avatarRef])
 
   return {
+    // voice session
     startVoiceChat,
     stopVoiceChat,
+
+    // mic controls (used by your AudioInput)
     muteInputAudio,
     unmuteInputAudio,
-    setSpeechLanguage,
+
+    // state
     isMuted,
     isVoiceChatActive,
     isVoiceChatLoading,
+    isRecording,
   }
 }
