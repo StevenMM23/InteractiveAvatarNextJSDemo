@@ -12,6 +12,7 @@ interface FloatingControlsProps {
     onToggleChat: () => void
     isChatOpen: boolean
     avatarType: string
+
 }
 
 export const FloatingControls: React.FC<FloatingControlsProps> = ({
@@ -28,7 +29,10 @@ export const FloatingControls: React.FC<FloatingControlsProps> = ({
             <div className="flex gap-12 bg-background/90 backdrop-blur-xl px-12 py-6 rounded-3xl border border-border shadow-2xl">
                 {/* Volver */}
                 <ControlButton
-                    onClick={onBack}
+                    onClick={() => {
+
+                        onBack()
+                    }}
                     icon={<ArrowLeft className="h-10 w-10" />}
                     label="Volver"
                 />

@@ -70,7 +70,7 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
     return () => setCurrentAvatarType(null)
   }, [selectedDemo.id, setCurrentAvatarType])
 
-  const { startVoiceChat, isMuted, muteInputAudio, unmuteInputAudio } =
+  const { startVoiceChat, isMuted, muteInputAudio, unmuteInputAudio, stopVoiceChat } =
     useVoiceChat(currentAvatarType || "")
   const handleToggleMute = () => {
     if (isMuted) unmuteInputAudio()
@@ -117,9 +117,14 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
   })
 
   useUnmount(() => {
+    stopVoiceChat()
     stopAvatar()
   })
-
+  const handleBack = () => {
+    stopVoiceChat()   // 👈 cerramos micrófono + WS
+    stopAvatar()
+    onBack()
+  }
   useEffect(() => {
     if (stream && mediaStream.current) {
       mediaStream.current.srcObject = stream
@@ -188,7 +193,7 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
         <FloatingControls
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
-          onBack={onBack}
+          onBack={handleBack}
           onToggleChat={() => setIsChatOpen((prev) => !prev)}
           isChatOpen={isChatOpen}
           avatarType={selectedDemo.id}
