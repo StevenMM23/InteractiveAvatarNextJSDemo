@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useRef, useState, useEffect } from "react"
 import { TaskType } from "@heygen/streaming-avatar"
 import axios from "axios"
 import { useStreamingAvatarContext } from "./context"
@@ -9,15 +9,23 @@ import { useAvatarStore } from "../../store/avatarStore"
 const isBCGSession = (s: any): s is import("../../store/avatarStore").BCGSession =>
   s && "conversationId" in s && "selectedProduct" in s
 
+// ---------- SINGLETON (por pestaña) ----------
+let activeOwnerId: string | null = null
+let globalStop: ((reason?: string) => void) | null = null
+
+function makeId() {
+  return Math.random().toString(36).slice(2)
+}
+
 function pickMimeAndEncoding() {
-  const candidates = [
-    { mime: "audio/webm;codecs=opus", encoding: "WEBM_OPUS" as const },
-    { mime: "audio/ogg;codecs=opus", encoding: "OGG_OPUS" as const },
+  const prefs = [
+    { mime: "audio/webm;codecs=opus", encoding: "WEBM_OPUS" as const }, // Chrome
+    { mime: "audio/ogg;codecs=opus", encoding: "OGG_OPUS" as const },   // Firefox
   ]
-  for (const c of candidates) {
-    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(c.mime)) return c
+  for (const p of prefs) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(p.mime)) return p
   }
-  throw new Error("No MediaRecorder support for WebM/Opus or OGG/Opus in this browser")
+  throw new Error("Este navegador no soporta MediaRecorder con Opus (WebM/OGG)")
 }
 
 export const useVoiceChat = (avatarType = "gestor-cobranza") => {
@@ -32,182 +40,250 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
   const { getSession, currentAvatarType } = useAvatarStore()
   const isActive = avatarType === currentAvatarType
 
-  // WS / Recorder
+  // ---------- IDs / flags ----------
+  const instanceIdRef = useRef<string>(makeId())
+  const isOwner = () => activeOwnerId === instanceIdRef.current
+
+  // ---------- WS / Recorder / AudioGraph ----------
   const wsRef = useRef<WebSocket | null>(null)
   const wsReadyRef = useRef(false)
-  const isStreamingRef = useRef(false)
+  const preReadyBufferRef = useRef<ArrayBuffer[]>([])
+  const MAX_PRE_READY = 24
 
   const recorderRef = useRef<MediaRecorder | null>(null)
-  const isRecorderStartingRef = useRef(false)
-  const [isRecording, setIsRecording] = useState(false)
-
-  const preReadyBufferRef = useRef<ArrayBuffer[]>([])
-  const MAX_PRE_READY_BUFFERS = 30
-
-  // WebAudio
   const mediaStreamRef = useRef<MediaStream | null>(null)
+
   const audioCtxRef = useRef<AudioContext | null>(null)
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
-  const hpfRef = useRef<BiquadFilterNode | null>(null)
   const gainRef = useRef<GainNode | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
-  const destRef = useRef<MediaStreamAudioDestinationNode | null>(null)
 
-  // Gates
-  const isMutedRef = useRef<boolean>(isMuted)
-  const sendGateRef = useRef<boolean>(true)   // ⬅️ blocks sending while muted
+  const [isRecording, setIsRecording] = useState(false)
+  const desiredMimeRef = useRef<string | null>(null)
+  const desiredEncodingRef = useRef<"OGG_OPUS" | "WEBM_OPUS" | null>(null)
 
-  // VAD / interrupt throttle
+  // estados “vivos” que usan callbacks
+  const isMutedRef = useRef(isMuted)
+  useEffect(() => { isMutedRef.current = isMuted }, [isMuted])
+
+  // ---------- VAD / barge-in ----------
+  const VAD_UP = 0.014
+  const INTERRUPT_COOLDOWN_MS = 700
   const lastInterruptAtRef = useRef(0)
-  const VAD_UP = 0.012
-  const INTERRUPT_COOLDOWN_MS = 800
 
+  // ---------- Utils ----------
   const isValidTranscript = (t: string) => {
     const clean = t.replace(/[^\w\sáéíóúüñÁÉÍÓÚÜÑ]/g, "").trim()
-    const validShort = ["si", "sí", "no", "ok"]
-    if (validShort.includes(clean.toLowerCase())) return true
+    const short = ["si", "sí", "no", "ok"]
+    if (short.includes(clean.toLowerCase())) return true
     if (clean.length < 3) return false
     const noise = ["ah", "eh", "um", "uh", "mm", "hmm"]
     if (noise.includes(clean.toLowerCase())) return false
     return true
   }
 
-  const stopMedia = useCallback(() => {
+  const teardown = useCallback((reason: string = "teardown") => {
+    // cerrar recorder
     try { if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop() } catch { }
     recorderRef.current = null
 
+    // cerrar WS
+    try { wsRef.current?.send(JSON.stringify({ type: "stop" })) } catch { }
+    try { wsRef.current?.close() } catch { }
+    wsRef.current = null
+    wsReadyRef.current = false
+    preReadyBufferRef.current = []
+
+    // cerrar audio
+    try { audioCtxRef.current?.close() } catch { }
+    audioCtxRef.current = null
+    gainRef.current = null
+    analyserRef.current = null
+
+    // parar tracks
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(t => { try { t.stop() } catch { } })
       mediaStreamRef.current = null
     }
-    if (audioCtxRef.current) {
-      try { audioCtxRef.current.close() } catch { }
-      audioCtxRef.current = null
-    }
-    sourceRef.current = null
-    hpfRef.current = null
-    gainRef.current = null
-    analyserRef.current = null
-    destRef.current = null
 
     setIsRecording(false)
+    setIsVoiceChatActive(false)
+    setIsMuted(true)
+
+    // liberar “dueño”
+    if (isOwner()) {
+      activeOwnerId = null
+      globalStop = null
+    }
+
+    console.log(`[GoogleSTT] 🔚 teardown complete (${reason})`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const beginRecording = useCallback(async () => {
-    if (isRecorderStartingRef.current) {
-      console.log("[GoogleSTT] ⚠️ beginRecording: start in progress")
-      return
+  // expose stop globally: cualquier instancia lo puede invocar
+  useEffect(() => {
+    return () => {
+      // si esta instancia se desmonta y es la dueña, apaga todo
+      if (isOwner()) teardown("hook-unmount")
     }
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      console.log("[GoogleSTT] ⚠️ beginRecording: already recording")
-      return
+  }, [teardown])
+
+  // ---------- Audio (getUserMedia + WebAudio + Recorder) ----------
+  const buildGraphIfNeeded = useCallback(async () => {
+    if (!mediaStreamRef.current) {
+      mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+        },
+      })
     }
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContext()
+      const src = audioCtxRef.current.createMediaStreamSource(mediaStreamRef.current)
+      const g = audioCtxRef.current.createGain()
+      g.gain.value = 1
+      const an = audioCtxRef.current.createAnalyser()
+      an.fftSize = 512
+      src.connect(g); g.connect(an)
+      gainRef.current = g
+      analyserRef.current = an
 
-    isRecorderStartingRef.current = true
-    try {
-      // 1) Get mic
-      if (!mediaStreamRef.current) {
-        mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: false,
-            autoGainControl: false,
-            channelCount: 1,
-          },
-        })
-      }
-
-      // 2) Build graph (mic → HPF → gain → analyser → DEST)
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
-        sourceRef.current = audioCtxRef.current.createMediaStreamSource(mediaStreamRef.current)
-        hpfRef.current = audioCtxRef.current.createBiquadFilter()
-        hpfRef.current.type = "highpass"
-        hpfRef.current.frequency.value = 120
-
-        gainRef.current = audioCtxRef.current.createGain()
-        gainRef.current.gain.value = 1
-
-        analyserRef.current = audioCtxRef.current.createAnalyser()
-        analyserRef.current.fftSize = 512
-
-        destRef.current = audioCtxRef.current.createMediaStreamDestination()
-
-        // connect
-        sourceRef.current.connect(hpfRef.current)
-        hpfRef.current.connect(gainRef.current)
-        gainRef.current.connect(analyserRef.current)
-        gainRef.current.connect(destRef.current)
-
-        // VAD loop (disabled while muted)
-        const buf = new Uint8Array(analyserRef.current.frequencyBinCount)
-        const tick = () => {
-          if (!analyserRef.current) return
-          analyserRef.current.getByteTimeDomainData(buf)
-          let s = 0
-          for (let i = 0; i < buf.length; i++) {
-            const v = (buf[i] - 128) / 128
-            s += v * v
+      // VAD loop
+      const buf = new Uint8Array(an.frequencyBinCount)
+      const tick = () => {
+        if (!analyserRef.current) return
+        analyserRef.current.getByteTimeDomainData(buf)
+        let s = 0
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128
+          s += v * v
+        }
+        const rms = Math.sqrt(s / buf.length)
+        if (rms >= VAD_UP && !isMutedRef.current && wsReadyRef.current) {
+          const now = performance.now()
+          if (now - lastInterruptAtRef.current > INTERRUPT_COOLDOWN_MS) {
+            lastInterruptAtRef.current = now
+            try { avatarRef.current?.interrupt?.() } catch { }
+            // no hacemos más — barge-in mínimo
           }
-          const rms = Math.sqrt(s / buf.length)
-          if (!isMutedRef.current && rms >= VAD_UP) {
-            const now = performance.now()
-            if (now - lastInterruptAtRef.current > INTERRUPT_COOLDOWN_MS) {
-              console.log(`[GoogleSTT][VAD] 📢 start (rms=${rms.toFixed(3)}) → interrupt()`)
-              lastInterruptAtRef.current = now
-              try { avatarRef.current?.interrupt?.() } catch { }
-            }
-          }
-          requestAnimationFrame(tick)
         }
         requestAnimationFrame(tick)
       }
-
-      // 3) Recorder from DEST stream (processed!)
-      if (!recorderRef.current) {
-        const { mime } = pickMimeAndEncoding()
-        recorderRef.current = new MediaRecorder(destRef.current!.stream, { mimeType: mime })
-
-        recorderRef.current.ondataavailable = async (e) => {
-          if (!e.data || e.data.size === 0 || !wsRef.current) return
-          if (wsRef.current.readyState !== WebSocket.OPEN) return
-          if (!wsReadyRef.current) {
-            // buffer small pre-ready
-            const buf = await e.data.arrayBuffer()
-            if (preReadyBufferRef.current.length < MAX_PRE_READY_BUFFERS) {
-              preReadyBufferRef.current.push(buf)
-            }
-            return
-          }
-          if (!sendGateRef.current) return // ⬅️ hard gate while muted
-          wsRef.current.send(await e.data.arrayBuffer())
-        }
-
-        recorderRef.current.onstop = () => console.log("[GoogleSTT] ⏹️ recorder stopped")
-      }
-
-      if (recorderRef.current.state === "inactive") {
-        recorderRef.current.start(100) // 100ms chunks
-        setIsRecording(true)
-        console.log("[GoogleSTT] 🎤 Recording started")
-      }
-    } finally {
-      isRecorderStartingRef.current = false
+      requestAnimationFrame(tick)
     }
-  }, [avatarRef, setIsRecording])
+  }, [avatarRef])
+  // dentro del hook
+  const restartRecorder = useCallback(async () => {
+    // Para garantizar cabecera en el próximo blob
+    return new Promise<void>((resolve) => {
+      if (!recorderRef.current) return resolve();
 
+      // si ya está grabando → parar y re-crear
+      const stopAndStart = async () => {
+        try {
+          const rec = recorderRef.current!;
+          const stream = mediaStreamRef.current!;
+          // detach handlers por si el browser dispara eventos tardíos
+          rec.ondataavailable = null as any;
+          rec.onerror = null as any;
+          if (rec.state !== "inactive") {
+            rec.onstop = () => {
+              // crear uno nuevo
+              const nrec = new MediaRecorder(stream, { mimeType: desiredMimeRef.current! });
+              recorderRef.current = nrec;
+              nrec.ondataavailable = async (e) => {
+                if (!e.data || e.data.size === 0 || !wsRef.current) return;
+                const buf = await e.data.arrayBuffer();
+                if (wsRef.current.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(buf);
+                }
+              };
+              nrec.start(100);
+              setIsRecording(true);
+              console.log("[GoogleSTT] 🔁 Recorder restarted (new header)");
+              resolve();
+            };
+            rec.stop();
+          } else {
+            // estaba inactivo, simplemente crear de nuevo
+            const nrec = new MediaRecorder(stream, { mimeType: desiredMimeRef.current! });
+            recorderRef.current = nrec;
+            nrec.ondataavailable = async (e) => {
+              if (!e.data || e.data.size === 0 || !wsRef.current) return;
+              const buf = await e.data.arrayBuffer();
+              if (wsRef.current.readyState === WebSocket.OPEN) wsRef.current.send(buf);
+            };
+            nrec.start(100);
+            setIsRecording(true);
+            console.log("[GoogleSTT] 🔁 Recorder restarted (inactive→start)");
+            resolve();
+          }
+        } catch (e) {
+          console.error("[GoogleSTT] ❌ restartRecorder error:", e);
+          resolve();
+        }
+      };
+
+      stopAndStart();
+    });
+  }, [setIsRecording]);
+
+  const beginRecording = useCallback(async () => {
+    // idempotente
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      return
+    }
+
+    await buildGraphIfNeeded()
+
+    if (!recorderRef.current) {
+      const mime =
+        MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus"
+          : MediaRecorder.isTypeSupported("audio/ogg;codecs=opus") ? "audio/ogg;codecs=opus"
+            : ""
+      if (!mime) throw new Error("MediaRecorder sin soporte para Opus")
+      recorderRef.current = new MediaRecorder(mediaStreamRef.current!, { mimeType: mime })
+
+      recorderRef.current.ondataavailable = async (e) => {
+        if (!e.data || e.data.size === 0) return
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+        // 🔒 si está muteado → NO enviar
+        if (isMutedRef.current) return
+        const buf = await e.data.arrayBuffer()
+        if (wsReadyRef.current) {
+          try { wsRef.current.send(buf) } catch { }
+        } else {
+          if (preReadyBufferRef.current.length < MAX_PRE_READY) {
+            preReadyBufferRef.current.push(buf)
+          }
+        }
+      }
+      recorderRef.current.onstop = () => { /* log opcional */ }
+    }
+
+    recorderRef.current.start(100) // 100ms para latencia baja
+    setIsRecording(true)
+  }, [buildGraphIfNeeded])
+
+  // ---------- WS ----------
   const handleWSMessage = useCallback(async (event: MessageEvent) => {
     let data: any
-    try { data = JSON.parse(event.data) } catch { }
-    if (!data) return
-
+    try { data = JSON.parse(event.data) } catch { return }
+    if (data.type === "reset") {
+      console.log("[GoogleSTT] 🔁 Server requested recorder reset (need header)");
+      await restartRecorder();
+      return;
+    }
     if (data.type === "ready") {
-      console.log("[GoogleSTT] ✅ Backend ready → flush pre-ready buffers")
       wsReadyRef.current = true
-      for (const chunk of preReadyBufferRef.current) {
-        try { if (sendGateRef.current) wsRef.current?.send(chunk) } catch { }
-      }
+      // ⚠️ ya estábamos grabando en pre-ready → sólo vaciamos el buffer
+      const pending = preReadyBufferRef.current
       preReadyBufferRef.current = []
+      for (const chunk of pending) {
+        try { wsRef.current?.send(chunk) } catch { }
+      }
       return
     }
 
@@ -218,8 +294,11 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
 
     if (data.transcript) {
       if (!data.isFinal) {
+        // parciales: para consola y barge-in, pero si mute → ignorar
         if (!isMutedRef.current) {
           console.log("[GoogleSTT] ✍️ Partial:", data.transcript)
+          // (el VAD ya bargea por sí mismo; mantener aquí por respaldo)
+          try { avatarRef.current?.interrupt?.() } catch { }
         }
         return
       }
@@ -236,96 +315,80 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           const session = getSession("gestor-cobranza")
           if (!session?.sessionId) return
           const body = { session_id: session.sessionId, user_input: transcript }
-          const apiRes = await axios.post("/api/gestor-cobranza/chat", body, {
-            headers: { "Content-Type": "application/json" }, timeout: 30000,
-          })
-          textToSpeak = apiRes.data?.agent_response || ""
+          const r = await axios.post("/api/gestor-cobranza/chat", body, { headers: { "Content-Type": "application/json" }, timeout: 30000 })
+          textToSpeak = r.data?.agent_response || ""
         } else if (avatarType === "bcg-product") {
           const session = getSession("bcg-product")
           if (!session || !isBCGSession(session) || !session.conversationId) return
           const body = { user_input: transcript, conversation_id: session.conversationId }
-          const apiRes = await axios.post("/api/bcg/chat", body, {
-            headers: { "Content-Type": "application/json" }, timeout: 30000,
-          })
-          textToSpeak = apiRes.data?.response || ""
-          if (apiRes.data?.image_base64) {
+          const r = await axios.post("/api/bcg/chat", body, { headers: { "Content-Type": "application/json" }, timeout: 30000 })
+          textToSpeak = r.data?.response || ""
+          if (r.data?.image_base64) {
             const { addBCGImage, setImageModalOpen } = useAvatarStore.getState()
-            addBCGImage(apiRes.data.image_base64)
+            addBCGImage(r.data.image_base64)
             setImageModalOpen(true)
           }
         }
         if (textToSpeak) {
           await avatarRef.current?.speak({ text: textToSpeak, taskType: TaskType.REPEAT })
         }
-      } catch (err) {
-        console.error("[GoogleSTT] ❌ Business API error:", err)
+      } catch (e) {
+        console.error("[GoogleSTT] ❌ Error API negocio:", e)
       }
     }
   }, [addUserMessage, avatarRef, avatarType, getSession])
 
   const startStreaming = useCallback(async () => {
-    if (isStreamingRef.current) {
-      console.log("[GoogleSTT] ⚠️ startStreaming ignored: already running")
-      return
-    }
-    isStreamingRef.current = true
+    const { mime, encoding } = pickMimeAndEncoding()
+    desiredMimeRef.current = mime
+    desiredEncodingRef.current = encoding
 
-    try {
-      console.log(`[GoogleSTT] 🎤 Starting streaming (${avatarType})...`)
-      const { encoding } = pickMimeAndEncoding()
-      console.log(`[GoogleSTT] Chosen encoding=${encoding}`)
-
-      const url =
-        process.env.NEXT_PUBLIC_STT_WS_URL ??
-        (location.protocol === "https:"
-          ? `wss://${location.hostname}:4000/ws`
-          : `ws://${location.hostname}:4000/ws`)
-
-      const ws = new WebSocket(url)
-      ws.binaryType = "arraybuffer"
-      wsRef.current = ws
-      wsReadyRef.current = false
-      preReadyBufferRef.current = []
-
-      ws.onopen = async () => {
-        console.log("[GoogleSTT] 🔗 WS open → handshake")
-        ws.send(JSON.stringify({
-          type: "start",
-          encoding, languageCode: "es-ES",
-          interimResults: true, singleUtterance: false,
-          model: "latest_long", sampleRateHertz: 16000,
-        }))
-        try { await beginRecording() } catch (e) {
-          console.error("[GoogleSTT] ❌ beginRecording (pre-ready) failed:", e)
-        }
-      }
-      ws.onmessage = handleWSMessage
-      ws.onclose = () => { console.log("[GoogleSTT] 🔌 WS closed"); stopMedia(); isStreamingRef.current = false }
-      ws.onerror = (err) => { console.error("[GoogleSTT] ⚠️ WS error:", err); isStreamingRef.current = false }
-    } catch (e) {
-      isStreamingRef.current = false
-      throw e
-    }
-  }, [avatarType, beginRecording, handleWSMessage, stopMedia])
-
-  const stopStreaming = useCallback(() => {
-    try { wsRef.current?.send(JSON.stringify({ type: "stop" })) } catch { }
-    try { wsRef.current?.close() } catch { }
-    wsRef.current = null
+    const url =
+      process.env.NEXT_PUBLIC_STT_WS_URL ??
+      (location.protocol === "https:"
+        ? `wss://${location.hostname}:4000/ws`
+        : `ws://${location.hostname}:4000/ws`)
+    console.log("[GoogleSTT] 🌐 Connecting to WS:", url, mime, encoding)
+    const ws = new WebSocket(url)
+    ws.binaryType = "arraybuffer"
+    wsRef.current = ws
     wsReadyRef.current = false
     preReadyBufferRef.current = []
-    isStreamingRef.current = false
-    stopMedia()
-    console.log("[GoogleSTT] 🔚 teardown done")
-  }, [stopMedia])
 
-  // Public API
+    ws.onopen = async () => {
+      // 1) empezamos a grabar YA (pre-ready)
+      try { await beginRecording() } catch (e) { console.error("[GoogleSTT] beginRecording failed:", e) }
+      // 2) handshake
+      ws.send(JSON.stringify({
+        type: "start",
+        encoding,
+        languageCode: "es-ES",
+        interimResults: true,
+        singleUtterance: false,
+        model: "latest_long",
+        sampleRateHertz: 16000,
+      }))
+    }
+    ws.onmessage = handleWSMessage
+    ws.onclose = () => teardown("ws-close")
+    ws.onerror = (err) => console.error("[GoogleSTT] ⚠️ WS error:", err)
+  }, [beginRecording, handleWSMessage, teardown])
+
+  // ---------- API pública ----------
   const startVoiceChat = useCallback(async () => {
     if (!isActive || !avatarRef.current) return
     setIsVoiceChatLoading(true)
     try {
+      // pedir candado
+      if (activeOwnerId && activeOwnerId !== instanceIdRef.current) {
+        // otro hook ya controla; primero detenerlo
+        globalStop?.("preempt-by-new-owner")
+      }
+      activeOwnerId = instanceIdRef.current
+      globalStop = (why?: string) => { if (isOwner()) teardown(why ?? "global-stop") }
+
+      // abrir micro + WS
       isMutedRef.current = false
-      sendGateRef.current = true
       setIsMuted(false)
 
       const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
@@ -335,48 +398,40 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
         await startStreaming()
       }
       setIsVoiceChatActive(true)
-    } catch (err) {
-      console.error("[useVoiceChat] ❌ startVoiceChat error:", err)
+    } catch (e) {
+      console.error("[useVoiceChat] ❌ startVoiceChat:", e)
+      // si falló, liberar candado
+      if (isOwner()) { activeOwnerId = null; globalStop = null }
     } finally {
       setIsVoiceChatLoading(false)
     }
-  }, [isActive, avatarRef, avatarType, setIsVoiceChatActive, setIsMuted, setIsVoiceChatLoading, startStreaming])
+  }, [isActive, avatarRef, avatarType, setIsMuted, setIsVoiceChatActive, setIsVoiceChatLoading, startStreaming, teardown])
 
   const stopVoiceChat = useCallback(() => {
-    if (!isActive || !avatarRef.current) return
-    stopStreaming()
-    avatarRef.current.closeVoiceChat?.()
-    setIsVoiceChatActive(false)
-    isMutedRef.current = true
-    sendGateRef.current = false
-    setIsMuted(true)
-  }, [isActive, avatarRef, stopStreaming, setIsMuted, setIsVoiceChatActive])
+    // siempre intenta parar la sesión activa (dueña)
+    globalStop?.("ui-stop")
+  }, [])
 
   const muteInputAudio = useCallback(() => {
-    const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
-    if (isKnowledge) {
-      avatarRef.current?.muteInputAudio?.()
-    } else if (gainRef.current && audioCtxRef.current) {
-      console.log("[GoogleSTT] 🔇 Soft-mute (gain→0 + gate)")
-      gainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.01)
-      sendGateRef.current = false
-    }
+    // soft-mute + no enviar chunks
+    try {
+      if (gainRef.current && audioCtxRef.current) {
+        gainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.01)
+      }
+    } catch { }
     isMutedRef.current = true
     setIsMuted(true)
-  }, [avatarType, avatarRef, setIsMuted])
+  }, [setIsMuted])
 
   const unmuteInputAudio = useCallback(() => {
-    const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
-    if (isKnowledge) {
-      avatarRef.current?.unmuteInputAudio?.()
-    } else if (gainRef.current && audioCtxRef.current) {
-      console.log("[GoogleSTT] 🔊 Unmute (gain→1 + gate on)")
-      gainRef.current.gain.setTargetAtTime(1, audioCtxRef.current.currentTime, 0.01)
-      sendGateRef.current = true
-    }
+    try {
+      if (gainRef.current && audioCtxRef.current) {
+        gainRef.current.gain.setTargetAtTime(1, audioCtxRef.current.currentTime, 0.01)
+      }
+    } catch { }
     isMutedRef.current = false
     setIsMuted(false)
-  }, [avatarType, avatarRef, setIsMuted])
+  }, [setIsMuted])
 
   return {
     startVoiceChat,

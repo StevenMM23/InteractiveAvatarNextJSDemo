@@ -99,7 +99,15 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
     const response = await fetch("/api/get-access-token", { method: "POST" })
     return response.text()
   }
-
+  useEffect(() => {
+    const onRouteAway = () => { try { stopVoiceChat() } catch { } }
+    window.addEventListener("pagehide", onRouteAway)
+    window.addEventListener("beforeunload", onRouteAway)
+    return () => {
+      window.removeEventListener("pagehide", onRouteAway)
+      window.removeEventListener("beforeunload", onRouteAway)
+    }
+  }, [stopVoiceChat])
   const startSessionV2 = useMemoizedFn(async () => {
     try {
       const newToken = await fetchAccessToken()
@@ -116,15 +124,19 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
     }
   })
 
+  // ensure teardown on unmount too
   useUnmount(() => {
-    stopVoiceChat()
-    stopAvatar()
+    try { stopVoiceChat() } catch { }
+    try { stopAvatar() } catch { }
   })
-  const handleBack = () => {
-    stopVoiceChat()   // 👈 cerramos micrófono + WS
-    stopAvatar()
+
+  // when wiring the back button:
+  const handleBack = useMemoizedFn(async () => {
+    try { stopVoiceChat() } catch { }
+    try { stopAvatar() } catch { }
     onBack()
-  }
+  })
+
   useEffect(() => {
     if (stream && mediaStream.current) {
       mediaStream.current.srcObject = stream
@@ -193,7 +205,7 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
         <FloatingControls
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
-          onBack={handleBack}
+          onBack={handleBack}          // ← use the new handler
           onToggleChat={() => setIsChatOpen((prev) => !prev)}
           isChatOpen={isChatOpen}
           avatarType={selectedDemo.id}
