@@ -3,20 +3,20 @@ import { GestorCobranzaSchema, BCGProductSchema } from "@/schemas/validation"
 
 // Demo registry - easy to add new demos
 export const demoRegistry: DemoDefinition[] = [
-  {
-    id: "volcano",
-    name: "Volcano Innovation Summit",
-    description: "Avatar con base de conocimiento integrada sobre el Volcano Innovation Summit.",
-    requiresForm: false,
-    icon: "Flame",
-    avatarConfig: {
-      sessionType: "voice",
-      autoStartMicrophone: true,
-      enableMute: true,
-      greeting:
-        "¡Hola! Soy el asistente del Volcano Innovation Summit. ¿Quieres saber sobre agenda, speakers o startups?",
-    },
-  },
+  // {
+  //   id: "volcano",
+  //   name: "Volcano Innovation Summit",
+  //   description: "Avatar con base de conocimiento integrada sobre el Volcano Innovation Summit.",
+  //   requiresForm: false,
+  //   icon: "Flame",
+  //   avatarConfig: {
+  //     sessionType: "voice",
+  //     autoStartMicrophone: true,
+  //     enableMute: true,
+  //     greeting:
+  //       "¡Hola! Soy el asistente del Volcano Innovation Summit. ¿Quieres saber sobre agenda, speakers o startups?",
+  //   },
+  // },
 
   {
     id: "gbm-onboarding",
