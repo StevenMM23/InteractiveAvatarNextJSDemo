@@ -28,9 +28,10 @@ export const useStreamingAvatarSession = () => {
     handleEndMessage,
     clearMessages,
   } = useStreamingAvatarContext()
-  const { stopVoiceChat } = useVoiceChat()
+  // const { stopVoiceChat } = useVoiceChat()
 
   useMessageHistory()
+  const { isMuted } = useStreamingAvatarContext() // IMPORTA este valor arriba (o pásalo como param si prefieres)
 
   const init = useCallback(
     (token: string) => {
@@ -38,7 +39,6 @@ export const useStreamingAvatarSession = () => {
         token,
         basePath: basePath,
       })
-
       return avatarRef.current
     },
     [basePath, avatarRef],
@@ -56,7 +56,7 @@ export const useStreamingAvatarSession = () => {
     avatarRef.current?.off(StreamingEvents.STREAM_READY, handleStream)
     avatarRef.current?.off(StreamingEvents.STREAM_DISCONNECTED, stop)
     clearMessages()
-    stopVoiceChat()
+    // stopVoiceChat() // esto desmonta tanto SDK como Google STT según el tipo
     setIsListening(false)
     setIsUserTalking(false)
     setIsAvatarTalking(false)
@@ -69,7 +69,7 @@ export const useStreamingAvatarSession = () => {
     setStream,
     avatarRef,
     setIsListening,
-    stopVoiceChat,
+    // stopVoiceChat,
     clearMessages,
     setIsUserTalking,
     setIsAvatarTalking,
@@ -82,15 +82,11 @@ export const useStreamingAvatarSession = () => {
       }
 
       if (!avatarRef.current) {
-        if (!token) {
-          throw new Error("Token is required")
-        }
+        if (!token) throw new Error("Token is required")
         init(token)
       }
 
-      if (!avatarRef.current) {
-        throw new Error("Avatar is not initialized")
-      }
+      if (!avatarRef.current) throw new Error("Avatar is not initialized")
 
       setSessionState(StreamingAvatarSessionState.CONNECTING)
       avatarRef.current.on(StreamingEvents.STREAM_READY, handleStream)
@@ -98,25 +94,16 @@ export const useStreamingAvatarSession = () => {
       avatarRef.current.on(StreamingEvents.CONNECTION_QUALITY_CHANGED, ({ detail }: { detail: ConnectionQuality }) =>
         setConnectionQuality(detail),
       )
-      avatarRef.current.on(StreamingEvents.USER_START, () => {
-        setIsUserTalking(true)
-      })
-      avatarRef.current.on(StreamingEvents.USER_STOP, () => {
-        setIsUserTalking(false)
-      })
-      avatarRef.current.on(StreamingEvents.AVATAR_START_TALKING, () => {
-        setIsAvatarTalking(true)
-      })
-      avatarRef.current.on(StreamingEvents.AVATAR_STOP_TALKING, () => {
-        setIsAvatarTalking(false)
-      })
+      avatarRef.current.on(StreamingEvents.USER_START, () => setIsUserTalking(true))
+      avatarRef.current.on(StreamingEvents.USER_STOP, () => setIsUserTalking(false))
+      avatarRef.current.on(StreamingEvents.AVATAR_START_TALKING, () => setIsAvatarTalking(true))
+      avatarRef.current.on(StreamingEvents.AVATAR_STOP_TALKING, () => setIsAvatarTalking(false))
       avatarRef.current.on(StreamingEvents.USER_TALKING_MESSAGE, handleUserTalkingMessage)
       avatarRef.current.on(StreamingEvents.AVATAR_TALKING_MESSAGE, handleStreamingTalkingMessage)
       avatarRef.current.on(StreamingEvents.USER_END_MESSAGE, handleEndMessage)
       avatarRef.current.on(StreamingEvents.AVATAR_END_MESSAGE, handleEndMessage)
 
       await avatarRef.current.createStartAvatar(config)
-
       return avatarRef.current
     },
     [

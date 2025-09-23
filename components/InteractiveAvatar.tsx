@@ -26,6 +26,8 @@ import { AdvancedSettings } from "./AvatarSession/AdvanceSettings"
 import { ChatSidebar } from "./AvatarSession/ChatSidebar"
 import { FloatingControls } from "./AvatarSession/FloatingControls"
 
+const TAG = "[InteractiveAvatar]"
+
 const DEFAULT_CONFIG: StartAvatarRequest = {
   quality: AvatarQuality.High,
   avatarName: "ea745510dfc64dfc9afce9c443943828",
@@ -60,40 +62,37 @@ interface InteractiveAvatarProps {
 }
 
 function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
-  const { initAvatar, startAvatar, stopAvatar, sessionState, stream } =
-    useStreamingAvatarSession()
+  const { initAvatar, startAvatar, stopAvatar, sessionState, stream } = useStreamingAvatarSession()
   const { currentAvatarType, setCurrentAvatarType, getSession } = useAvatarStore()
   const [isChatOpen, setIsChatOpen] = useState(false)
 
   useEffect(() => {
     setCurrentAvatarType(selectedDemo.id)
+    console.log(`${TAG} setCurrentAvatarType →`, selectedDemo.id)
     return () => setCurrentAvatarType(null)
   }, [selectedDemo.id, setCurrentAvatarType])
 
+  // Pasa SIEMPRE el id del avatar actual
   const { startVoiceChat, isMuted, muteInputAudio, unmuteInputAudio, stopVoiceChat } =
-    useVoiceChat(currentAvatarType || "")
+    useVoiceChat(selectedDemo.id)
+
   const handleToggleMute = () => {
-    if (isMuted) unmuteInputAudio()
-    else muteInputAudio()
+    console.log(`${TAG} toggle mute → next=${!isMuted}`)
+    isMuted ? unmuteInputAudio() : muteInputAudio()
   }
 
   const [config, setConfig] = useState<StartAvatarRequest>({
     ...DEFAULT_CONFIG,
-    avatarName:
-      AVATAR_IDS[selectedDemo.id as keyof typeof AVATAR_IDS] ||
-      DEFAULT_CONFIG.avatarName,
+    avatarName: AVATAR_IDS[selectedDemo.id as keyof typeof AVATAR_IDS] || DEFAULT_CONFIG.avatarName,
     knowledgeId: KNOWLEDGE_IDS[selectedDemo.id as keyof typeof AVATAR_IDS],
   })
 
   const mediaStream = useRef<HTMLVideoElement>(null)
   const currentSession = getSession(selectedDemo.id)
 
-  const handleLanguageChange = (language: string) =>
-    setConfig((p) => ({ ...p, language }))
-  const handleQualityChange = (quality: AvatarQuality) =>
-    setConfig((p) => ({ ...p, quality }))
-  const handleTransportChange = (t: VoiceChatTransport) =>
-    setConfig((p) => ({ ...p, voiceChatTransport: t }))
+  const handleLanguageChange = (language: string) => setConfig((p) => ({ ...p, language }))
+  const handleQualityChange = (quality: AvatarQuality) => setConfig((p) => ({ ...p, quality }))
+  const handleTransportChange = (t: VoiceChatTransport) => setConfig((p) => ({ ...p, voiceChatTransport: t }))
 
   async function fetchAccessToken() {
     const response = await fetch("/api/get-access-token", { method: "POST" })
@@ -110,36 +109,23 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
     }
   }, [stopVoiceChat])
 
-  // util para distinguir knowledge avatars (usan startVoiceChat del SDK)
-  const isKnowledge = useMemo(
-    () => ["volcano", "gbm-onboarding", "microsoft-services"].includes(selectedDemo.id),
-    [selectedDemo.id],
-  )
-
-  // Para limpiar listeners creados en startSessionV2
   const cleanupFnsRef = useRef<(() => void)[]>([])
 
   const startSessionV2 = useMemoizedFn(async () => {
     try {
+      console.log(`${TAG} startSessionV2 → id=${selectedDemo.id}`)
       const token = await fetchAccessToken()
       const avatar = initAvatar(token)
 
-      // 1) Esperar SOLO el evento STREAM_READY (sin tocar <video> manualmente)
-      //    y arrancar el voice chat del SDK lo antes posible.
       const waitStreamReady = new Promise<void>((resolve) => {
-        const onReady = () => {
-          resolve()
-        }
+        const onReady = () => { console.log(`${TAG} STREAM_READY`); resolve() }
         avatar.on(StreamingEvents.STREAM_READY, onReady)
         cleanupFnsRef.current.push(() => avatar.off(StreamingEvents.STREAM_READY, onReady))
       })
 
-      // (opcional) si tienes un mensaje guardado de sesión previa, lo dices cuando ya esté todo listo
       const onStreamReadySpeak = async () => {
         if (currentSession?.message) {
-          try {
-            await avatar.speak({ text: currentSession.message })
-          } catch { /* noop */ }
+          try { await avatar.speak({ text: currentSession.message }) } catch { }
         }
       }
       avatar.on(StreamingEvents.STREAM_READY, onStreamReadySpeak)
@@ -147,20 +133,16 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
         avatar.off(StreamingEvents.STREAM_READY, onStreamReadySpeak),
       )
 
-      // 2) Crear avatar
       await startAvatar(config)
 
-      // 3) En cuanto haya stream, arranca voice chat (micrófono) SIN warm-up
+      // Arrancar voice chat del SDK ASAP cuando haya stream
       await waitStreamReady
       await startVoiceChat()
-
-      // Nota: NO hacemos fallback de re-speak aquí (fue la causa de respuestas “cortadas”).
     } catch (error) {
-      console.error("[Avatar] Error starting session:", error)
+      console.error(`${TAG} Error starting session:`, error)
     }
   })
 
-  // Teardown
   useUnmount(() => {
     try { stopVoiceChat() } catch { }
     try { stopAvatar() } catch { }
@@ -176,7 +158,6 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
     onBack()
   })
 
-  // Mantener tu encadenamiento visual original para el <video>
   useEffect(() => {
     if (stream && mediaStream.current) {
       mediaStream.current.srcObject = stream
@@ -188,7 +169,6 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
 
   return (
     <div className="relative w-full h-full bg-background overflow-hidden">
-      {/* Header */}
       {sessionState === StreamingAvatarSessionState.INACTIVE ? (
         <div className="p-8">
           <AvatarHeader selectedDemo={selectedDemo} onBack={onBack} />
@@ -201,7 +181,6 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
         </div>
       )}
 
-      {/* Área principal */}
       <div className="flex h-full">
         <div className="flex-1 flex items-center justify-center">
           {sessionState !== StreamingAvatarSessionState.INACTIVE ? (

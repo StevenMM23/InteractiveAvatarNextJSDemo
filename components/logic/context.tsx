@@ -133,6 +133,7 @@ const useStreamingAvatarMessageState = () => {
       "Calcular tasa de crecimiento",
       "Obtener un reporte automático",
     ]
+    
     if (bcgResponsePatterns.some((pattern) => detail.message?.includes(pattern))) return
 
     if (currentSenderRef.current === MessageSender.CLIENT) {

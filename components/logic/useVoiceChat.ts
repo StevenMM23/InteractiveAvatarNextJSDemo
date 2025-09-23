@@ -6,6 +6,7 @@ import axios from "axios"
 import { useStreamingAvatarContext } from "./context"
 import { useAvatarStore } from "../../store/avatarStore"
 
+const TAG = "[useVoiceChat]"
 const isBCGSession = (s: any): s is import("../../store/avatarStore").BCGSession =>
   s && "conversationId" in s && "selectedProduct" in s
 
@@ -28,6 +29,9 @@ function pickMimeAndEncoding() {
   throw new Error("Este navegador no soporta MediaRecorder con Opus (WebM/OGG)")
 }
 
+// Avatares que usan SDK (HeyGen) – sin Google STT
+const KNOWLEDGE_AVATARS = new Set(["volcano", "gbm-onboarding", "microsoft-services"])
+
 export const useVoiceChat = (avatarType = "gestor-cobranza") => {
   const {
     avatarRef,
@@ -38,13 +42,17 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
   } = useStreamingAvatarContext()
 
   const { getSession, currentAvatarType } = useAvatarStore()
-  const isActive = avatarType === currentAvatarType
-
-  // ---------- IDs / flags ----------
   const instanceIdRef = useRef<string>(makeId())
   const isOwner = () => activeOwnerId === instanceIdRef.current
 
-  // ---------- WS / Recorder / AudioGraph ----------
+  const mode: "SDK" | "GOOGLE" = KNOWLEDGE_AVATARS.has(avatarType) ? "SDK" : "GOOGLE"
+  useEffect(() => {
+    console.log(`${TAG} mount: avatarType=${avatarType} (mode=${mode}), store.current=${currentAvatarType}`)
+    return () => console.log(`${TAG} unmount: avatarType=${avatarType} (mode=${mode})`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatarType])
+
+  // ---------- WS / Recorder / AudioGraph (solo Google STT) ----------
   const wsRef = useRef<WebSocket | null>(null)
   const wsReadyRef = useRef(false)
   const preReadyBufferRef = useRef<ArrayBuffer[]>([])
@@ -61,16 +69,18 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
   const desiredMimeRef = useRef<string | null>(null)
   const desiredEncodingRef = useRef<"OGG_OPUS" | "WEBM_OPUS" | null>(null)
 
-  // estados “vivos” que usan callbacks
+  // estado vivo del mute
   const isMutedRef = useRef(isMuted)
-  useEffect(() => { isMutedRef.current = isMuted }, [isMuted])
+  useEffect(() => {
+    isMutedRef.current = isMuted
+    console.log(`${TAG} isMuted →`, isMuted)
+  }, [isMuted])
 
-  // ---------- VAD / barge-in ----------
+  // ---------- VAD / barge-in (solo Google STT) ----------
   const VAD_UP = 0.014
   const INTERRUPT_COOLDOWN_MS = 700
   const lastInterruptAtRef = useRef(0)
 
-  // ---------- Utils ----------
   const isValidTranscript = (t: string) => {
     const clean = t.replace(/[^\w\sáéíóúüñÁÉÍÓÚÜÑ]/g, "").trim()
     const short = ["si", "sí", "no", "ok"]
@@ -82,24 +92,38 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
   }
 
   const teardown = useCallback((reason: string = "teardown") => {
-    // cerrar recorder
-    try { if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop() } catch { }
+    console.log(`${TAG} teardown(${reason}) start; mode=${mode}`)
+
+    // SDK → cerrar canal de voz del SDK (sin tocar nada de Google)
+    if (mode === "SDK") {
+      try {
+        console.log(`${TAG} [SDK] closeVoiceChat()`)
+        avatarRef.current?.closeVoiceChat?.()
+      } catch (e) {
+        console.warn(`${TAG} [SDK] closeVoiceChat error`, e)
+      }
+    }
+
+    // Google STT → apagar grabación + WS + audio graph
+    try {
+      if (recorderRef.current && recorderRef.current.state !== "inactive") {
+        console.log(`${TAG} [GOOGLE] recorder.stop()`)
+        recorderRef.current.stop()
+      }
+    } catch (e) { console.warn(`${TAG} [GOOGLE] recorder.stop error`, e) }
     recorderRef.current = null
 
-    // cerrar WS
     try { wsRef.current?.send(JSON.stringify({ type: "stop" })) } catch { }
     try { wsRef.current?.close() } catch { }
     wsRef.current = null
     wsReadyRef.current = false
     preReadyBufferRef.current = []
 
-    // cerrar audio
     try { audioCtxRef.current?.close() } catch { }
     audioCtxRef.current = null
     gainRef.current = null
     analyserRef.current = null
 
-    // parar tracks
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(t => { try { t.stop() } catch { } })
       mediaStreamRef.current = null
@@ -109,27 +133,26 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     setIsVoiceChatActive(false)
     setIsMuted(true)
 
-    // liberar “dueño”
     if (isOwner()) {
       activeOwnerId = null
       globalStop = null
     }
 
-    console.log(`[GoogleSTT] 🔚 teardown complete (${reason})`)
+    console.log(`${TAG} teardown(${reason}) end; isVoiceChatActive=false, isMuted=true`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [avatarRef, mode])
 
-  // expose stop globally: cualquier instancia lo puede invocar
+  // unmount → apagar si este hook es la “dueña”
   useEffect(() => {
-    return () => {
-      // si esta instancia se desmonta y es la dueña, apaga todo
-      if (isOwner()) teardown("hook-unmount")
-    }
+    return () => { if (isOwner()) teardown("hook-unmount") }
   }, [teardown])
 
-  // ---------- Audio (getUserMedia + WebAudio + Recorder) ----------
+  // ---------- Audio graph (solo Google STT) ----------
   const buildGraphIfNeeded = useCallback(async () => {
+    if (mode === "SDK") return // nunca construir audio local para SDK
+
     if (!mediaStreamRef.current) {
+      console.log(`${TAG} [GOOGLE] getUserMedia()`)
       mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -149,8 +172,8 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
       src.connect(g); g.connect(an)
       gainRef.current = g
       analyserRef.current = an
+      console.log(`${TAG} [GOOGLE] AudioGraph OK (gain=1)`)
 
-      // VAD loop
       const buf = new Uint8Array(an.frequencyBinCount)
       const tick = () => {
         if (!analyserRef.current) return
@@ -166,76 +189,65 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           if (now - lastInterruptAtRef.current > INTERRUPT_COOLDOWN_MS) {
             lastInterruptAtRef.current = now
             try { avatarRef.current?.interrupt?.() } catch { }
-            // no hacemos más — barge-in mínimo
           }
         }
         requestAnimationFrame(tick)
       }
       requestAnimationFrame(tick)
     }
-  }, [avatarRef])
-  // dentro del hook
-  const restartRecorder = useCallback(async () => {
-    // Para garantizar cabecera en el próximo blob
-    return new Promise<void>((resolve) => {
-      if (!recorderRef.current) return resolve();
+  }, [avatarRef, mode])
 
-      // si ya está grabando → parar y re-crear
+  const restartRecorder = useCallback(async () => {
+    if (mode === "SDK") return
+    return new Promise<void>((resolve) => {
+      if (!recorderRef.current) return resolve()
       const stopAndStart = async () => {
         try {
-          const rec = recorderRef.current!;
-          const stream = mediaStreamRef.current!;
-          // detach handlers por si el browser dispara eventos tardíos
-          rec.ondataavailable = null as any;
-          rec.onerror = null as any;
-          if (rec.state !== "inactive") {
-            rec.onstop = () => {
-              // crear uno nuevo
-              const nrec = new MediaRecorder(stream, { mimeType: desiredMimeRef.current! });
-              recorderRef.current = nrec;
+          // @ts-ignore
+          const stream = mediaStreamRef.current!
+          if (recorderRef.current?.state !== "inactive") {
+            // @ts-ignore
+            recorderRef.current.onstop = () => {
+              const nrec = new MediaRecorder(stream, { mimeType: desiredMimeRef.current! })
+              recorderRef.current = nrec
               nrec.ondataavailable = async (e) => {
-                if (!e.data || e.data.size === 0 || !wsRef.current) return;
-                const buf = await e.data.arrayBuffer();
-                if (wsRef.current.readyState === WebSocket.OPEN) {
-                  wsRef.current.send(buf);
-                }
-              };
-              nrec.start(100);
-              setIsRecording(true);
-              console.log("[GoogleSTT] 🔁 Recorder restarted (new header)");
-              resolve();
-            };
-            rec.stop();
+                if (!e.data || e.data.size === 0 || !wsRef.current) return
+                const buf = await e.data.arrayBuffer()
+                if (wsRef.current.readyState === WebSocket.OPEN) wsRef.current.send(buf)
+              }
+              nrec.start(100)
+              setIsRecording(true)
+              console.log(`${TAG} [GOOGLE] Recorder restarted`)
+              resolve()
+            }
+            console.log(`${TAG} [GOOGLE] Recorder stop (for restart)`)
+            // @ts-ignore
+            recorderRef.current.stop()
           } else {
-            // estaba inactivo, simplemente crear de nuevo
-            const nrec = new MediaRecorder(stream, { mimeType: desiredMimeRef.current! });
-            recorderRef.current = nrec;
+            const nrec = new MediaRecorder(stream, { mimeType: desiredMimeRef.current! })
+            recorderRef.current = nrec
             nrec.ondataavailable = async (e) => {
-              if (!e.data || e.data.size === 0 || !wsRef.current) return;
-              const buf = await e.data.arrayBuffer();
-              if (wsRef.current.readyState === WebSocket.OPEN) wsRef.current.send(buf);
-            };
-            nrec.start(100);
-            setIsRecording(true);
-            console.log("[GoogleSTT] 🔁 Recorder restarted (inactive→start)");
-            resolve();
+              if (!e.data || e.data.size === 0 || !wsRef.current) return
+              const buf = await e.data.arrayBuffer()
+              if (wsRef.current.readyState === WebSocket.OPEN) wsRef.current.send(buf)
+            }
+            nrec.start(100)
+            setIsRecording(true)
+            console.log(`${TAG} [GOOGLE] Recorder started (was inactive)`)
+            resolve()
           }
         } catch (e) {
-          console.error("[GoogleSTT] ❌ restartRecorder error:", e);
-          resolve();
+          console.error(`${TAG} [GOOGLE] restartRecorder error:`, e)
+          resolve()
         }
-      };
-
-      stopAndStart();
-    });
-  }, [setIsRecording]);
+      }
+      stopAndStart()
+    })
+  }, [setIsRecording, mode])
 
   const beginRecording = useCallback(async () => {
-    // idempotente
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      return
-    }
-
+    if (mode === "SDK") return
+    if (recorderRef.current && recorderRef.current.state !== "inactive") return
     await buildGraphIfNeeded()
 
     if (!recorderRef.current) {
@@ -245,12 +257,15 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
             : ""
       if (!mime) throw new Error("MediaRecorder sin soporte para Opus")
       recorderRef.current = new MediaRecorder(mediaStreamRef.current!, { mimeType: mime })
+      console.log(`${TAG} [GOOGLE] MediaRecorder created (${mime})`)
 
       recorderRef.current.ondataavailable = async (e) => {
         if (!e.data || e.data.size === 0) return
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
-        // 🔒 si está muteado → NO enviar
-        if (isMutedRef.current) return
+        if (isMutedRef.current) {
+          // Filtro hard: nada sale si está muteado
+          return
+        }
         const buf = await e.data.arrayBuffer()
         if (wsReadyRef.current) {
           try { wsRef.current.send(buf) } catch { }
@@ -260,53 +275,47 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           }
         }
       }
-      recorderRef.current.onstop = () => { /* log opcional */ }
     }
 
-    recorderRef.current.start(100) // 100ms para latencia baja
+    recorderRef.current.start(100)
     setIsRecording(true)
-  }, [buildGraphIfNeeded])
+    console.log(`${TAG} [GOOGLE] Recorder.start(100) -> isRecording=true`)
+  }, [buildGraphIfNeeded, mode])
 
-  // ---------- WS ----------
+  // ---------- WS (solo Google STT) ----------
   const handleWSMessage = useCallback(async (event: MessageEvent) => {
+    if (mode === "SDK") return
     let data: any
     try { data = JSON.parse(event.data) } catch { return }
+
     if (data.type === "reset") {
-      console.log("[GoogleSTT] 🔁 Server requested recorder reset (need header)");
-      await restartRecorder();
-      return;
+      console.log(`${TAG} [GOOGLE] WS reset → restartRecorder`)
+      await restartRecorder()
+      return
     }
     if (data.type === "ready") {
+      console.log(`${TAG} [GOOGLE] WS ready; flush pre-buffer len=${preReadyBufferRef.current.length}`)
       wsReadyRef.current = true
-      // ⚠️ ya estábamos grabando en pre-ready → sólo vaciamos el buffer
       const pending = preReadyBufferRef.current
       preReadyBufferRef.current = []
-      for (const chunk of pending) {
-        try { wsRef.current?.send(chunk) } catch { }
-      }
+      for (const chunk of pending) { try { wsRef.current?.send(chunk) } catch { } }
       return
     }
-
-    if (data.error) {
-      console.error("[GoogleSTT] ❌ Backend error:", data.error)
-      return
-    }
+    if (data.error) { console.error(`${TAG} [GOOGLE] WS error:`, data.error); return }
 
     if (data.transcript) {
       if (!data.isFinal) {
-        // parciales: para consola y barge-in, pero si mute → ignorar
         if (!isMutedRef.current) {
-          console.log("[GoogleSTT] ✍️ Partial:", data.transcript)
-          // (el VAD ya bargea por sí mismo; mantener aquí por respaldo)
+          // barge-in por parcial
           try { avatarRef.current?.interrupt?.() } catch { }
         }
         return
       }
 
       const transcript = String(data.transcript || "").trim()
-      console.log("[GoogleSTT] ✅ Final:", transcript)
       if (!isValidTranscript(transcript)) return
 
+      console.log(`${TAG} [GOOGLE] FINAL transcript:`, transcript, " (isMuted=", isMutedRef.current, ")")
       addUserMessage(transcript)
 
       try {
@@ -315,13 +324,17 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           const session = getSession("gestor-cobranza")
           if (!session?.sessionId) return
           const body = { session_id: session.sessionId, user_input: transcript }
-          const r = await axios.post("/api/gestor-cobranza/chat", body, { headers: { "Content-Type": "application/json" }, timeout: 30000 })
+          const r = await axios.post("/api/gestor-cobranza/chat", body, {
+            headers: { "Content-Type": "application/json" }, timeout: 30000
+          })
           textToSpeak = r.data?.agent_response || ""
         } else if (avatarType === "bcg-product") {
           const session = getSession("bcg-product")
           if (!session || !isBCGSession(session) || !session.conversationId) return
           const body = { user_input: transcript, conversation_id: session.conversationId }
-          const r = await axios.post("/api/bcg/chat", body, { headers: { "Content-Type": "application/json" }, timeout: 30000 })
+          const r = await axios.post("/api/bcg/chat", body, {
+            headers: { "Content-Type": "application/json" }, timeout: 30000
+          })
           textToSpeak = r.data?.response || ""
           if (r.data?.image_base64) {
             const { addBCGImage, setImageModalOpen } = useAvatarStore.getState()
@@ -333,12 +346,13 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
           await avatarRef.current?.speak({ text: textToSpeak, taskType: TaskType.REPEAT })
         }
       } catch (e) {
-        console.error("[GoogleSTT] ❌ Error API negocio:", e)
+        console.error(`${TAG} [GOOGLE] ❌ Error API negocio:`, e)
       }
     }
-  }, [addUserMessage, avatarRef, avatarType, getSession])
+  }, [addUserMessage, avatarRef, avatarType, getSession, restartRecorder, mode])
 
   const startStreaming = useCallback(async () => {
+    if (mode === "SDK") return
     const { mime, encoding } = pickMimeAndEncoding()
     desiredMimeRef.current = mime
     desiredEncodingRef.current = encoding
@@ -348,7 +362,7 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
       (location.protocol === "https:"
         ? `wss://${location.hostname}:4000/ws`
         : `ws://${location.hostname}:4000/ws`)
-    console.log("[GoogleSTT] 🌐 Connecting to WS:", url, mime, encoding)
+    console.log(`${TAG} [GOOGLE] WS connect →`, url, mime, encoding)
     const ws = new WebSocket(url)
     ws.binaryType = "arraybuffer"
     wsRef.current = ws
@@ -356,9 +370,7 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     preReadyBufferRef.current = []
 
     ws.onopen = async () => {
-      // 1) empezamos a grabar YA (pre-ready)
-      try { await beginRecording() } catch (e) { console.error("[GoogleSTT] beginRecording failed:", e) }
-      // 2) handshake
+      try { await beginRecording() } catch (e) { console.error(`${TAG} [GOOGLE] beginRecording failed:`, e) }
       ws.send(JSON.stringify({
         type: "start",
         encoding,
@@ -371,49 +383,70 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     }
     ws.onmessage = handleWSMessage
     ws.onclose = () => teardown("ws-close")
-    ws.onerror = (err) => console.error("[GoogleSTT] ⚠️ WS error:", err)
-  }, [beginRecording, handleWSMessage, teardown])
+    ws.onerror = (err) => console.error(`${TAG} [GOOGLE] WS onerror:`, err)
+  }, [beginRecording, handleWSMessage, teardown, mode])
 
   // ---------- API pública ----------
   const startVoiceChat = useCallback(async () => {
-    if (!isActive || !avatarRef.current) return
-    setIsVoiceChatLoading(true)
-    try {
-      // pedir candado
+    if (!avatarRef.current) { console.warn(`${TAG} startVoiceChat: avatarRef=null`); return }
+    // Ownership
+    if (!isOwner()) {
       if (activeOwnerId && activeOwnerId !== instanceIdRef.current) {
-        // otro hook ya controla; primero detenerlo
+        console.log(`${TAG} preempting previous owner ${activeOwnerId}`)
         globalStop?.("preempt-by-new-owner")
       }
       activeOwnerId = instanceIdRef.current
       globalStop = (why?: string) => { if (isOwner()) teardown(why ?? "global-stop") }
+    }
 
-      // abrir micro + WS
-      isMutedRef.current = false
-      setIsMuted(false)
-
-      const isKnowledge = ["volcano", "gbm-onboarding", "microsoft-services"].includes(avatarType)
-      if (isKnowledge) {
-        await avatarRef.current.startVoiceChat({})
+    console.log(`${TAG} startVoiceChat → mode=${mode}, avatarType=${avatarType}`)
+    setIsVoiceChatLoading(true)
+    try {
+      if (mode === "SDK") {
+        // Arrancamos activo (desmuteado)
+        await avatarRef.current.startVoiceChat({ isInputAudioMuted: false })
+        console.log(`${TAG} [SDK] startVoiceChat({ isInputAudioMuted:false }) OK`)
+        // Guardas dobles (asegurar estado):
+        try { avatarRef.current.unmuteInputAudio?.() } catch { }
+        try { avatarRef.current.startListening?.() } catch { }
+        setIsMuted(false)
       } else {
+        // Google STT
+        isMutedRef.current = false
+        setIsMuted(false)
         await startStreaming()
       }
       setIsVoiceChatActive(true)
+      console.log(`${TAG} startVoiceChat DONE → isVoiceChatActive=true, isMuted=false`)
     } catch (e) {
-      console.error("[useVoiceChat] ❌ startVoiceChat:", e)
-      // si falló, liberar candado
+      console.error(`${TAG} startVoiceChat ERROR:`, e)
       if (isOwner()) { activeOwnerId = null; globalStop = null }
     } finally {
       setIsVoiceChatLoading(false)
     }
-  }, [isActive, avatarRef, avatarType, setIsMuted, setIsVoiceChatActive, setIsVoiceChatLoading, startStreaming, teardown])
+  }, [avatarRef, mode, avatarType, setIsMuted, setIsVoiceChatActive, setIsVoiceChatLoading, startStreaming, teardown])
 
   const stopVoiceChat = useCallback(() => {
-    // siempre intenta parar la sesión activa (dueña)
+    console.log(`${TAG} stopVoiceChat()`)
     globalStop?.("ui-stop")
   }, [])
 
   const muteInputAudio = useCallback(() => {
-    // soft-mute + no enviar chunks
+    console.log(`${TAG} muteInputAudio (mode=${mode})`)
+    if (mode === "SDK") {
+      // Guardas dobles en SDK: mutear + detener el “listening”
+      try { avatarRef.current?.muteInputAudio?.() } catch (e) {
+        console.warn(`${TAG} [SDK] muteInputAudio error`, e)
+      }
+      try { avatarRef.current?.stopListening?.() } catch (e) {
+        console.warn(`${TAG} [SDK] stopListening error`, e)
+      }
+      isMutedRef.current = true
+      setIsMuted(true)
+      console.log(`${TAG} [SDK] muted=true`)
+      return
+    }
+    // Google STT: bajar ganancia + bloquear envío
     try {
       if (gainRef.current && audioCtxRef.current) {
         gainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.01)
@@ -421,9 +454,25 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     } catch { }
     isMutedRef.current = true
     setIsMuted(true)
-  }, [setIsMuted])
+    console.log(`${TAG} [GOOGLE] muted=true (gain=0 + filtro de chunks)`)
+  }, [avatarRef, mode, setIsMuted])
 
   const unmuteInputAudio = useCallback(() => {
+    console.log(`${TAG} unmuteInputAudio (mode=${mode})`)
+    if (mode === "SDK") {
+      // Guardas dobles en SDK: desmutear + reanudar “listening”
+      try { avatarRef.current?.unmuteInputAudio?.() } catch (e) {
+        console.warn(`${TAG} [SDK] unmuteInputAudio error`, e)
+      }
+      try { avatarRef.current?.startListening?.() } catch (e) {
+        console.warn(`${TAG} [SDK] startListening error`, e)
+      }
+      isMutedRef.current = false
+      setIsMuted(false)
+      console.log(`${TAG} [SDK] muted=false`)
+      return
+    }
+    // Google STT: subir ganancia y permitir envío
     try {
       if (gainRef.current && audioCtxRef.current) {
         gainRef.current.gain.setTargetAtTime(1, audioCtxRef.current.currentTime, 0.01)
@@ -431,7 +480,8 @@ export const useVoiceChat = (avatarType = "gestor-cobranza") => {
     } catch { }
     isMutedRef.current = false
     setIsMuted(false)
-  }, [setIsMuted])
+    console.log(`${TAG} [GOOGLE] muted=false (gain=1 + envío activo)`)
+  }, [avatarRef, mode, setIsMuted])
 
   return {
     startVoiceChat,
