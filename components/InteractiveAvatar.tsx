@@ -8,7 +8,7 @@ import {
   type StartAvatarRequest,
   ElevenLabsModel,
 } from "@heygen/streaming-avatar"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useMemoizedFn, useUnmount } from "ahooks"
 
 import { AvatarVideo } from "./AvatarSession/AvatarVideo"
@@ -99,6 +99,7 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
     const response = await fetch("/api/get-access-token", { method: "POST" })
     return response.text()
   }
+
   useEffect(() => {
     const onRouteAway = () => { try { stopVoiceChat() } catch { } }
     window.addEventListener("pagehide", onRouteAway)
@@ -108,52 +109,91 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
       window.removeEventListener("beforeunload", onRouteAway)
     }
   }, [stopVoiceChat])
+
+  // util para distinguir knowledge avatars (usan startVoiceChat del SDK)
+  const isKnowledge = useMemo(
+    () => ["volcano", "gbm-onboarding", "microsoft-services"].includes(selectedDemo.id),
+    [selectedDemo.id],
+  )
+
+  // Para limpiar listeners creados en startSessionV2
+  const cleanupFnsRef = useRef<(() => void)[]>([])
+
   const startSessionV2 = useMemoizedFn(async () => {
     try {
-      const newToken = await fetchAccessToken()
-      const avatar = initAvatar(newToken)
+      const token = await fetchAccessToken()
+      const avatar = initAvatar(token)
 
-      avatar.on(StreamingEvents.STREAM_READY, async () => {
-        if (currentSession?.message) avatar.speak({ text: currentSession.message })
+      // 1) Esperar SOLO el evento STREAM_READY (sin tocar <video> manualmente)
+      //    y arrancar el voice chat del SDK lo antes posible.
+      const waitStreamReady = new Promise<void>((resolve) => {
+        const onReady = () => {
+          resolve()
+        }
+        avatar.on(StreamingEvents.STREAM_READY, onReady)
+        cleanupFnsRef.current.push(() => avatar.off(StreamingEvents.STREAM_READY, onReady))
       })
 
+      // (opcional) si tienes un mensaje guardado de sesión previa, lo dices cuando ya esté todo listo
+      const onStreamReadySpeak = async () => {
+        if (currentSession?.message) {
+          try {
+            await avatar.speak({ text: currentSession.message })
+          } catch { /* noop */ }
+        }
+      }
+      avatar.on(StreamingEvents.STREAM_READY, onStreamReadySpeak)
+      cleanupFnsRef.current.push(() =>
+        avatar.off(StreamingEvents.STREAM_READY, onStreamReadySpeak),
+      )
+
+      // 2) Crear avatar
       await startAvatar(config)
+
+      // 3) En cuanto haya stream, arranca voice chat (micrófono) SIN warm-up
+      await waitStreamReady
       await startVoiceChat()
+
+      // Nota: NO hacemos fallback de re-speak aquí (fue la causa de respuestas “cortadas”).
     } catch (error) {
       console.error("[Avatar] Error starting session:", error)
     }
   })
 
-  // ensure teardown on unmount too
+  // Teardown
   useUnmount(() => {
     try { stopVoiceChat() } catch { }
     try { stopAvatar() } catch { }
+    try { cleanupFnsRef.current.forEach((fn) => fn()) } catch { }
+    cleanupFnsRef.current = []
   })
 
-  // when wiring the back button:
   const handleBack = useMemoizedFn(async () => {
     try { stopVoiceChat() } catch { }
     try { stopAvatar() } catch { }
+    try { cleanupFnsRef.current.forEach((fn) => fn()) } catch { }
+    cleanupFnsRef.current = []
     onBack()
   })
 
+  // Mantener tu encadenamiento visual original para el <video>
   useEffect(() => {
     if (stream && mediaStream.current) {
       mediaStream.current.srcObject = stream
-      mediaStream.current.onloadedmetadata = () => mediaStream.current?.play()
+      mediaStream.current.onloadedmetadata = () => {
+        mediaStream.current?.play().catch(() => { })
+      }
     }
   }, [stream])
 
   return (
     <div className="relative w-full h-full bg-background overflow-hidden">
-      {/* Header dinámico */}
+      {/* Header */}
       {sessionState === StreamingAvatarSessionState.INACTIVE ? (
-        // Header clásico con botón de volver
         <div className="p-8">
           <AvatarHeader selectedDemo={selectedDemo} onBack={onBack} />
         </div>
       ) : (
-        // Overlay inmersivo: solo título, sin botón de volver
         <div className="absolute top-4 left-6 z-20 bg-black/40 px-4 py-2 rounded-lg">
           <h2 className="text-lg lg:text-2xl font-bold text-white drop-shadow-md">
             {selectedDemo.name}
@@ -163,7 +203,6 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
 
       {/* Área principal */}
       <div className="flex h-full">
-        {/* Avatar ocupa todo el espacio */}
         <div className="flex-1 flex items-center justify-center">
           {sessionState !== StreamingAvatarSessionState.INACTIVE ? (
             <AvatarVideo ref={mediaStream} />
@@ -193,19 +232,17 @@ function InteractiveAvatar({ selectedDemo, onBack }: InteractiveAvatarProps) {
           )}
         </div>
 
-        {/* Sidebar a la derecha */}
         <ChatSidebar
           isOpen={isChatOpen}
           onToggle={() => setIsChatOpen((prev) => !prev)}
         />
       </div>
 
-      {/* Controles flotantes solo cuando está conectado */}
       {sessionState === StreamingAvatarSessionState.CONNECTED && (
         <FloatingControls
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
-          onBack={handleBack}          // ← use the new handler
+          onBack={handleBack}
           onToggleChat={() => setIsChatOpen((prev) => !prev)}
           isChatOpen={isChatOpen}
           avatarType={selectedDemo.id}
