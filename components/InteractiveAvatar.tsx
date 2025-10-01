@@ -47,12 +47,14 @@ const AVATAR_IDS = {
   volcano: "7f53aab9ad9848248caf19ef21aa3b3e",
   "gbm-onboarding": "ea745510dfc64dfc9afce9c443943828",
   "microsoft-services": "7f53aab9ad9848248caf19ef21aa3b3e",
+  "gbm-information": "7f53aab9ad9848248caf19ef21aa3b3e",
 } as const
 
 const KNOWLEDGE_IDS: Partial<Record<keyof typeof AVATAR_IDS, string | undefined>> = {
   volcano: "9f09452d95724ae28de9e474d23f0825",
   "gbm-onboarding": "c143998195c945e9b58e29fab7759d49",
   "microsoft-services": "c21c8ab19b5945359f439dde3481062c",
+  "gbm-information": "b7db08cfa96547b095cd3931570fc03a",
 }
 
 interface InteractiveAvatarProps {

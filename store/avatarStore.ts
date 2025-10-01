@@ -23,9 +23,13 @@ export interface AvatarStore {
   volcano: KnowledgeSession | null
   onboarding: KnowledgeSession | null
   microsoft: KnowledgeSession | null
+  gbmInformation: KnowledgeSession | null
+
+
   // 🔹 Estado global de vista inmersiva
   isImmersive: boolean
   setIsImmersive: (value: boolean) => void
+
   // 🔹 Avatar actual en uso
   currentAvatarType: string | null
 
@@ -34,13 +38,15 @@ export interface AvatarStore {
   isImageModalOpen: boolean
   selectedImage: string | null
   setSelectedImage: (img: string | null) => void
+
+
   // 🔹 Actions
   setGestorCobranzaSession: (session: AvatarSession) => void
   setBCGProductSession: (session: BCGSession) => void
   setVolcanoSession: (session: KnowledgeSession) => void
   setOnboardingSession: (session: KnowledgeSession) => void
   setMicrosoftSession: (session: KnowledgeSession) => void
-
+  setGbmInformationSession: (session: KnowledgeSession) => void
   setCurrentAvatarType: (avatarType: string | null) => void
 
   addBCGImage: (imageBase64: string) => void
@@ -54,6 +60,7 @@ export interface AvatarStore {
       | "volcano"
       | "onboarding"
       | "microsoft"
+      | "gbmInformation"
   ) => void
   clearAllSessions: () => void
   getSession: (
@@ -65,6 +72,7 @@ export const useAvatarStore = create<AvatarStore>((set, get) => ({
   gestorCobranza: null,
   bcgProduct: null,
   volcano: null,
+  gbmInformation: null,
   onboarding: null,
   microsoft: null,
   isImmersive: false,
@@ -81,8 +89,11 @@ export const useAvatarStore = create<AvatarStore>((set, get) => ({
   setVolcanoSession: (session) => set({ volcano: session }),
   setOnboardingSession: (session) => set({ onboarding: session }),
   setMicrosoftSession: (session) => set({ microsoft: session }),
+  setGbmInformationSession: (session) => set({ gbmInformation: session }),
   selectedImage: null,
   setSelectedImage: (img) => set({ selectedImage: img }),
+
+
   // Avatar actual
   setCurrentAvatarType: (avatarType) => set({ currentAvatarType: avatarType }),
 
@@ -108,6 +119,7 @@ export const useAvatarStore = create<AvatarStore>((set, get) => ({
       volcano: null,
       onboarding: null,
       microsoft: null,
+      gbmInformation: null,
       currentAvatarType: null,
       generatedImages: [],
       isImageModalOpen: false,
@@ -127,6 +139,8 @@ export const useAvatarStore = create<AvatarStore>((set, get) => ({
         return state.onboarding
       case "microsoft-services":
         return state.microsoft
+      case "gbm-information":   
+        return state.gbmInformation
       default:
         return null
     }

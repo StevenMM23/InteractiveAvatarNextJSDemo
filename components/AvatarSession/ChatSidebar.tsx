@@ -9,6 +9,8 @@ import { TextInput } from "./TextInput"
 import { useAvatarStore } from "@/store/avatarStore"
 import { ImageModal } from "../ImageModal"
 import { useEffect, useRef } from "react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 interface ChatSidebarProps {
     isOpen: boolean
@@ -72,8 +74,8 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
                                         >
                                             <div
                                                 className={`max-w-[80%] rounded-lg px-5 py-3 text-xl shadow-md ${msg.sender === MessageSender.CLIENT
-                                                        ? "bg-primary text-primary-foreground"
-                                                        : "bg-secondary text-secondary-foreground"
+                                                    ? "bg-primary text-primary-foreground"
+                                                    : "bg-secondary text-secondary-foreground"
                                                     }`}
                                             >
                                                 <p>{msg.content}</p>
@@ -143,11 +145,11 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ isOpen, onToggle }) =>
                                 >
                                     <div
                                         className={`max-w-[80%] rounded-lg px-5 py-3 text-xl shadow-md ${msg.sender === MessageSender.CLIENT
-                                                ? "bg-primary text-primary-foreground"
-                                                : "bg-secondary text-secondary-foreground"
+                                            ? "bg-primary text-primary-foreground"
+                                            : "bg-secondary text-secondary-foreground"
                                             }`}
                                     >
-                                        {msg.content}
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                                     </div>
                                 </div>
                             ))}

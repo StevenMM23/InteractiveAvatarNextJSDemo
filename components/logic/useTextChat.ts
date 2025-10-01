@@ -24,7 +24,8 @@ export const useTextChat = (avatarType = "gestor-cobranza") => {
       const isKnowledge =
         avatarType === "volcano" ||
         avatarType === "gbm-onboarding" ||
-        avatarType === "microsoft-services"
+        avatarType === "microsoft-services" ||
+        avatarType === "gbm-information"
 
       // Para API-driven, guardamos el mensaje del usuario en el historial
       if (!isKnowledge) addUserMessage(userInput)

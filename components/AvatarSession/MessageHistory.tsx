@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useMessageHistory } from "../logic"
 import { MessageSender } from "../logic/context"
-
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 export const MessageHistory: React.FC = () => {
   const { messages } = useMessageHistory()
   const [isOpen, setIsOpen] = useState(false)
@@ -61,16 +62,15 @@ export const MessageHistory: React.FC = () => {
             {messages.map((msg) => (
               <div
                 key={msg.id}
-                className={`flex ${msg.sender === MessageSender.CLIENT ? "justify-end" : "justify-start"
-                  }`}
+                className={`flex ${msg.sender === MessageSender.CLIENT ? "justify-end" : "justify-start"}`}
               >
                 <div
                   className={`max-w-[80%] rounded-lg px-4 py-2 text-sm shadow-md ${msg.sender === MessageSender.CLIENT
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-secondary text-secondary-foreground"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-secondary-foreground"
                     }`}
                 >
-                  {msg.content}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                 </div>
               </div>
             ))}

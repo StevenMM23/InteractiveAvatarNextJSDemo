@@ -17,7 +17,21 @@ export const demoRegistry: DemoDefinition[] = [
   //       "¡Hola! Soy el asistente del Volcano Innovation Summit. ¿Quieres saber sobre agenda, speakers o startups?",
   //   },
   // },
-
+  {
+    id: "gbm-information",
+    name: "GBM Information",
+    description:
+      "Avatar con base de conocimiento integrada para conversar en tiempo real sobre servicios de GBM: tecnología, nube, inteligencia artificial, ciberseguridad e infraestructura de Data Center, incluyendo socios estratégicos como IBM y Lenovo.",
+    requiresForm: false,
+    icon: "Server",
+    avatarConfig: {
+      sessionType: "voice",
+      autoStartMicrophone: true,
+      enableMute: true,
+      greeting:
+        "Hola, soy tu asistente de información GBM. Pregúntame sobre nuestros servicios de tecnología, nube, inteligencia artificial, ciberseguridad o infraestructura de Data Center.",
+    },
+  },
   {
     id: "gbm-onboarding",
     name: "GBM Onboarding",

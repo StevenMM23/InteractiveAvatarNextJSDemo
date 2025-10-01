@@ -30,7 +30,7 @@ function pickMimeAndEncoding() {
 }
 
 // Avatares que usan SDK (HeyGen) – sin Google STT
-const KNOWLEDGE_AVATARS = new Set(["volcano", "gbm-onboarding", "microsoft-services"])
+const KNOWLEDGE_AVATARS = new Set(["volcano", "gbm-onboarding", "microsoft-services","gbm-information"])
 
 export const useVoiceChat = (avatarType = "gestor-cobranza") => {
   const {

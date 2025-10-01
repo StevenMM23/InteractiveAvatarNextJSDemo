@@ -2,7 +2,7 @@
 
 import type { DemoDefinition } from "@/types/demo"
 import { demoRegistry } from "@/lib/avatarRegistry"
-import { Flame, GraduationCap, CreditCard, MessageCircle, TrendingUp, Settings, Cloud } from "lucide-react"
+import { Flame, GraduationCap, CreditCard, MessageCircle, TrendingUp, Settings, Cloud, Server } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -16,7 +16,8 @@ const iconMap = {
     MessageCircle,
     TrendingUp,
     Settings,
-    Cloud
+    Cloud,
+    Server
 }
 
 interface AvatarSelectorProps {
